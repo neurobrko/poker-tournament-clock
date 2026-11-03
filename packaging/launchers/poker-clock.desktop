@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Poker Clock
+Comment=Fullscreen home tournament clock
+Exec=poker-clock-launcher.sh
+Terminal=false
+Categories=Game;Utility;
