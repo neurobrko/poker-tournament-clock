@@ -1,0 +1,105 @@
+version: 1
+purchases:
+  initial_buy_in:
+    price: 2.00
+    chips: 1000
+  rebuy:
+    price: 2.00
+    chips: 1000
+  add_on:
+    price: 2.00
+    chips: 5000
+registration:
+  rebuys_enabled: true
+  registration_deadline:
+    at: end_of_break
+    target: 1
+  add_ons_enabled: true
+  add_on_break: 1
+schedule:
+  - kind: level
+    duration: 20m
+    small_blind: 5
+    big_blind: 10
+    ante:
+      kind: none
+  - kind: level
+    duration: 20m
+    small_blind: 10
+    big_blind: 20
+    ante:
+      kind: none
+  - kind: level
+    duration: 20m
+    small_blind: 25
+    big_blind: 50
+    ante:
+      kind: none
+  - kind: break
+    label: Break 1
+    duration: 10m
+  - kind: level
+    duration: 20m
+    small_blind: 50
+    big_blind: 100
+    ante:
+      kind: none
+  - kind: level
+    duration: 20m
+    small_blind: 100
+    big_blind: 200
+    ante:
+      kind: none
+  - kind: level
+    duration: 20m
+    small_blind: 250
+    big_blind: 500
+    ante:
+      kind: none
+  - kind: break
+    label: Break 2
+    duration: 10m
+    reminder: Chip up the 5-value chip.
+  - kind: level
+    duration: 20m
+    small_blind: 500
+    big_blind: 1000
+    ante:
+      kind: none
+  - kind: level
+    duration: 20m
+    small_blind: 1000
+    big_blind: 2000
+    ante:
+      kind: none
+  - kind: level
+    duration: 20m
+    small_blind: 2500
+    big_blind: 5000
+    ante:
+      kind: none
+  - kind: break
+    label: Break 3
+    duration: 10m
+    reminder: Chip up the 25-value chip.
+  - kind: level
+    duration: 20m
+    small_blind: 5000
+    big_blind: 10000
+    ante:
+      kind: none
+  - kind: level
+    duration: 20m
+    small_blind: 10000
+    big_blind: 20000
+    ante:
+      kind: none
+  - kind: level
+    duration: 20m
+    small_blind: 25000
+    big_blind: 50000
+    ante:
+      kind: none
+prize_tiers:
+  - min_players: 2
+    percentages: [60, 25, 15]
