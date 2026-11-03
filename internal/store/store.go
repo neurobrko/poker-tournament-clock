@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	currentSchemaVersion  = 1
+	currentSchemaVersion  = 4
 	databaseApplicationID = 1346587723 // ASCII "PCLK".
 )
 
@@ -36,6 +36,13 @@ var (
 
 //go:embed migrations/*.sql
 var migrationFS embed.FS
+
+var migrationFiles = []string{
+	"migrations/001_initial.sql",
+	"migrations/002_domain_events.sql",
+	"migrations/003_bust_corrections.sql",
+	"migrations/004_results.sql",
+}
 
 // Store keeps the application lock for the lifetime of its database connection.
 type Store struct {
@@ -66,11 +73,14 @@ type TournamentRecord struct {
 }
 
 type Checkpoint struct {
-	ClockElapsed time.Duration
-	RealElapsed  time.Duration
-	SegmentIndex int // One-based schedule position; zero means no segment selected.
-	Remaining    time.Duration
-	Running      bool
+	ClockElapsed    time.Duration
+	RealElapsed     time.Duration
+	SegmentIndex    int // One-based schedule position; zero means no segment selected.
+	Remaining       time.Duration
+	Running         bool
+	SegmentFinished bool
+	HoldReason      string
+	PendingIndex    int
 }
 
 type EventInput struct {
@@ -78,6 +88,7 @@ type EventInput struct {
 	Payload       any
 	Explanation   string
 	ParentEventID *int64
+	VoidEventID   *int64
 	WallTime      time.Time
 	ClockElapsed  *time.Duration
 	RealElapsed   *time.Duration
@@ -92,6 +103,7 @@ type EventRecord struct {
 	Payload       json.RawMessage
 	Explanation   string
 	ParentEventID *int64
+	VoidEventID   *int64
 }
 
 // Create makes a new database without overwriting an existing path, initializes its schema,
@@ -282,23 +294,26 @@ func migrate(ctx context.Context, db *sql.DB) error {
 	if version > currentSchemaVersion {
 		return fmt.Errorf("%w: found %d, supported through %d", ErrUnsupportedSchema, version, currentSchemaVersion)
 	}
-	if version == currentSchemaVersion {
-		return nil
-	}
-	migration, err := migrationFS.ReadFile("migrations/001_initial.sql")
-	if err != nil {
-		return fmt.Errorf("read initial database migration: %w", err)
-	}
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin database migration: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, string(migration)); err != nil {
-		_ = tx.Rollback()
-		return fmt.Errorf("apply database migration 1: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit database migration 1: %w", err)
+	for next := version + 1; next <= currentSchemaVersion; next++ {
+		if next > len(migrationFiles) {
+			return fmt.Errorf("missing database migration %d", next)
+		}
+		migration, err := migrationFS.ReadFile(migrationFiles[next-1])
+		if err != nil {
+			return fmt.Errorf("read database migration %d: %w", next, err)
+		}
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("begin database migration %d: %w", next, err)
+		}
+		if _, err := tx.ExecContext(ctx, string(migration)); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("apply database migration %d: %w", next, err)
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit database migration %d: %w", next, err)
+		}
+		version = next
 	}
 	return nil
 }
@@ -350,12 +365,13 @@ func (s *Store) Tournament(ctx context.Context) (TournamentRecord, error) {
 	var started, ended sql.NullString
 	var clockNS, realNS, remainingNS int64
 	var segment int
-	var running, registrationClosed int
+	var running, registrationClosed, segmentFinished, pendingIndex int
+	var holdReason sql.NullString
 	err := s.db.QueryRowContext(ctx, `SELECT name, status, configuration_json, created_at, updated_at,
 		started_at, ended_at, clock_elapsed_ns, real_elapsed_ns, segment_index, remaining_ns,
-		clock_running, registration_closed FROM tournament WHERE id = 1`).Scan(
+		clock_running, registration_closed, segment_finished, hold_reason, pending_segment_index FROM tournament WHERE id = 1`).Scan(
 		&record.Name, &record.Status, &configJSON, &created, &updated, &started, &ended,
-		&clockNS, &realNS, &segment, &remainingNS, &running, &registrationClosed)
+		&clockNS, &realNS, &segment, &remainingNS, &running, &registrationClosed, &segmentFinished, &holdReason, &pendingIndex)
 	if err != nil {
 		return TournamentRecord{}, err
 	}
@@ -388,6 +404,10 @@ func (s *Store) Tournament(ctx context.Context) (TournamentRecord, error) {
 	record.Checkpoint = Checkpoint{
 		ClockElapsed: time.Duration(clockNS), RealElapsed: time.Duration(realNS),
 		SegmentIndex: segment, Remaining: time.Duration(remainingNS), Running: running != 0,
+		SegmentFinished: segmentFinished != 0, PendingIndex: pendingIndex,
+	}
+	if holdReason.Valid {
+		record.Checkpoint.HoldReason = holdReason.String
 	}
 	record.RegistrationClosed = registrationClosed != 0
 	return record, nil
@@ -493,6 +513,25 @@ func requirePrestartUpdate(ctx context.Context, tx *sql.Tx, result sql.Result) e
 	return ErrNotTournamentDatabase
 }
 
+// ViewTx runs a read-only transaction for consistent domain queries.
+func (s *Store) ViewTx(ctx context.Context, view func(*sql.Tx) error) error {
+	if err := s.checkOpen(); err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return fmt.Errorf("begin read transaction: %w", err)
+	}
+	defer tx.Rollback()
+	if err := view(tx); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("finish read transaction: %w", err)
+	}
+	return nil
+}
+
 // CommitEvent records an audit event, domain updates, and an optional clock checkpoint atomically.
 // The mutation callback runs in the same transaction and receives the new audit event ID.
 func (s *Store) CommitEvent(ctx context.Context, event EventInput, checkpoint *Checkpoint, mutation func(*sql.Tx, int64) error) (int64, error) {
@@ -575,16 +614,22 @@ func insertEvent(ctx context.Context, tx *sql.Tx, event EventInput, payload []by
 		}
 		realElapsed = int64(*event.RealElapsed)
 	}
-	var parent any
+	var parent, voids any
 	if event.ParentEventID != nil {
 		if *event.ParentEventID <= 0 {
 			return 0, fmt.Errorf("parent event ID must be positive")
 		}
 		parent = *event.ParentEventID
 	}
+	if event.VoidEventID != nil {
+		if *event.VoidEventID <= 0 {
+			return 0, fmt.Errorf("voided event ID must be positive")
+		}
+		voids = *event.VoidEventID
+	}
 	result, err := tx.ExecContext(ctx, `INSERT INTO audit_events
-		(kind, wall_timestamp, clock_elapsed_ns, real_elapsed_ns, payload_json, explanation, parent_event_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`, event.Kind, wallString, clockElapsed, realElapsed, string(payload), nullableString(event.Explanation), parent)
+		(kind, wall_timestamp, clock_elapsed_ns, real_elapsed_ns, payload_json, explanation, parent_event_id, voids_event_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, event.Kind, wallString, clockElapsed, realElapsed, string(payload), nullableString(event.Explanation), parent, voids)
 	if err != nil {
 		return 0, fmt.Errorf("insert %s audit event: %w", event.Kind, err)
 	}
@@ -641,8 +686,17 @@ func (s *Store) SaveCheckpoint(ctx context.Context, checkpoint Checkpoint, at ti
 }
 
 func validateCheckpoint(checkpoint Checkpoint) error {
-	if checkpoint.ClockElapsed < 0 || checkpoint.RealElapsed < 0 || checkpoint.Remaining < 0 || checkpoint.SegmentIndex < 0 {
+	if checkpoint.ClockElapsed < 0 || checkpoint.RealElapsed < 0 || checkpoint.Remaining < 0 || checkpoint.SegmentIndex < 0 || checkpoint.PendingIndex < 0 {
 		return fmt.Errorf("clock checkpoint values cannot be negative")
+	}
+	if checkpoint.SegmentFinished && checkpoint.Remaining != 0 {
+		return fmt.Errorf("finished schedule segment must have zero remaining time")
+	}
+	if checkpoint.PendingIndex > 0 && (!checkpoint.SegmentFinished || checkpoint.HoldReason == "") {
+		return fmt.Errorf("pending schedule segment requires a finished segment and hold reason")
+	}
+	if !checkpoint.SegmentFinished && (checkpoint.PendingIndex > 0 || checkpoint.HoldReason != "") {
+		return fmt.Errorf("hold metadata requires a finished schedule segment")
 	}
 	if checkpoint.Running && checkpoint.SegmentIndex == 0 {
 		return fmt.Errorf("running clock checkpoint requires a selected schedule segment")
@@ -662,9 +716,11 @@ func updateCheckpointTx(ctx context.Context, tx *sql.Tx, checkpoint Checkpoint, 
 		return ErrCheckpointRegression
 	}
 	_, err := tx.ExecContext(ctx, `UPDATE tournament SET clock_elapsed_ns = ?, real_elapsed_ns = ?,
-		segment_index = ?, remaining_ns = ?, clock_running = ?, updated_at = ? WHERE id = 1`,
+		segment_index = ?, remaining_ns = ?, clock_running = ?, segment_finished = ?, hold_reason = ?,
+		pending_segment_index = ?, updated_at = ? WHERE id = 1`,
 		int64(checkpoint.ClockElapsed), int64(checkpoint.RealElapsed), checkpoint.SegmentIndex,
-		int64(checkpoint.Remaining), boolInt(checkpoint.Running), wallString)
+		int64(checkpoint.Remaining), boolInt(checkpoint.Running), boolInt(checkpoint.SegmentFinished),
+		nullableString(checkpoint.HoldReason), checkpoint.PendingIndex, wallString)
 	if err != nil {
 		return fmt.Errorf("update clock checkpoint: %w", err)
 	}
@@ -684,7 +740,7 @@ func (s *Store) Events(ctx context.Context) ([]EventRecord, error) {
 		return nil, err
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT id, kind, wall_timestamp, clock_elapsed_ns, real_elapsed_ns,
-		payload_json, COALESCE(explanation, ''), parent_event_id FROM audit_events ORDER BY id`)
+		payload_json, COALESCE(explanation, ''), parent_event_id, voids_event_id FROM audit_events ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("query audit events: %w", err)
 	}
@@ -694,9 +750,9 @@ func (s *Store) Events(ctx context.Context) ([]EventRecord, error) {
 		var event EventRecord
 		var wall string
 		var clockNS, realNS sql.NullInt64
-		var parent sql.NullInt64
+		var parent, voids sql.NullInt64
 		var payload string
-		if err := rows.Scan(&event.ID, &event.Kind, &wall, &clockNS, &realNS, &payload, &event.Explanation, &parent); err != nil {
+		if err := rows.Scan(&event.ID, &event.Kind, &wall, &clockNS, &realNS, &payload, &event.Explanation, &parent, &voids); err != nil {
 			return nil, fmt.Errorf("scan audit event: %w", err)
 		}
 		if event.WallTime, err = parseWallTime(wall); err != nil {
@@ -714,6 +770,10 @@ func (s *Store) Events(ctx context.Context) ([]EventRecord, error) {
 		if parent.Valid {
 			value := parent.Int64
 			event.ParentEventID = &value
+		}
+		if voids.Valid {
+			value := voids.Int64
+			event.VoidEventID = &value
 		}
 		events = append(events, event)
 	}
