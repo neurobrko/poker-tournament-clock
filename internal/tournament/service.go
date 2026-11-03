@@ -55,7 +55,7 @@ func NormalizePlayerName(name string) (display, key string, err error) {
 	if display == "" {
 		return "", "", fmt.Errorf("player name is required")
 	}
-	key = cases.Fold().String(display)
+	key = norm.NFC.String(cases.Fold().String(display))
 	return display, key, nil
 }
 

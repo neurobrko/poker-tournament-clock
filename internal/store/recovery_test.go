@@ -75,3 +75,43 @@ func TestOpenDoesNotInitializeUnrelatedSQLiteFile(t *testing.T) {
 		t.Fatalf("opening unrelated database changed user_version to %d", version)
 	}
 }
+
+func TestOpenEndedTournamentLeavesItReadOnly(t *testing.T) {
+	ctx := context.Background()
+	store := createTestStore(t)
+	path := store.Path()
+	endedAt := time.Now().Add(-time.Hour)
+	startedAt := endedAt.Add(-time.Hour)
+	if _, err := store.db.ExecContext(ctx, `UPDATE tournament SET status = ?, started_at = ?, ended_at = ?,
+		result_completed = 0, real_elapsed_ns = 0 WHERE id = 1`, StatusEnded, FormatWallTime(startedAt), FormatWallTime(endedAt)); err != nil {
+		t.Fatal(err)
+	}
+	before, err := store.Tournament(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventsBefore, err := store.Events(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	after, err := reopened.Tournament(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventsAfter, err := reopened.Events(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Status != StatusEnded || after.Checkpoint.RealElapsed != before.Checkpoint.RealElapsed || !after.UpdatedAt.Equal(before.UpdatedAt) || len(eventsAfter) != len(eventsBefore) {
+		t.Fatalf("opening ended tournament mutated it: before=%+v after=%+v events=%d/%d", before, after, len(eventsBefore), len(eventsAfter))
+	}
+}

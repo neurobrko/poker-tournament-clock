@@ -1,0 +1,990 @@
+package tui
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"strings"
+	"time"
+
+	"git.mpx.sk/elvis/poker_clock/internal/config"
+	"git.mpx.sk/elvis/poker_clock/internal/preferences"
+	"git.mpx.sk/elvis/poker_clock/internal/store"
+	"git.mpx.sk/elvis/poker_clock/internal/tournament"
+	tea "github.com/charmbracelet/bubbletea"
+)
+
+type dialogKind int
+
+const (
+	dialogText dialogKind = iota
+	dialogMenu
+	dialogConfirm
+	dialogMessage
+	dialogSelectPlayer
+	dialogMultiPlayers
+	dialogSelectSegment
+	dialogSelectPurchase
+	dialogSelectBust
+	dialogSelectParticipant
+)
+
+type dialogPurpose int
+
+const (
+	purposeNone dialogPurpose = iota
+	menuTemplate
+	menuPlayers
+	menuSettings
+	menuBusts
+	selectPurchase
+	selectRename
+	selectRemove
+	selectSitOut
+	selectBuster
+	selectBustee
+	selectVoidPurchase
+	selectVoidBust
+	selectCorrectBust
+	selectReplacement
+	selectRemainder
+)
+
+type textPurpose int
+
+const (
+	textTournamentName textPurpose = iota
+	textBrowserFilename
+	textAddPlayer
+	textRenamePlayer
+	textRemoveExplanation
+	textIncompleteEnd
+	textReopenExplanation
+	textRemainingTime
+	textVoidPurchaseExplanation
+	textVoidBustExplanation
+	textCorrectBustExplanation
+	textTournamentNameRename
+)
+
+type confirmPurpose int
+
+const (
+	confirmNone confirmPurpose = iota
+	confirmStart
+	confirmQuit
+	confirmRestorePlayer
+	confirmCompletedEnd
+	confirmIncompleteEnd
+	confirmReopen
+	confirmRemovePlayer
+	confirmVoidPurchase
+	confirmVoidBust
+	confirmCorrectBust
+)
+
+type dialog struct {
+	kind        dialogKind
+	purpose     dialogPurpose
+	textPurpose textPurpose
+	confirm     confirmPurpose
+	title       string
+	message     string
+	prompt      string
+	input       string
+	choices     []string
+	cursor      int
+
+	players         []tournament.Player
+	selected        map[string]bool
+	selectedOrder   []string
+	busters         []string
+	purchaseKind    tournament.PurchaseKind
+	targetPlayer    string
+	targetName      string
+	targetPurchase  int64
+	targetBustEvent int64
+	participant     bustParticipantOption
+	replacement     *tournament.BustParticipant
+	segmentIndex    int
+	purchases       []tournament.Purchase
+	bustEvents      []int64
+	bustLabels      []string
+	participants    []bustParticipantOption
+	tiedIDs         map[string]bool
+}
+
+type bustParticipantOption struct {
+	BustEventID int64
+	PlayerID    string
+	Role        string
+	Position    int
+	Tied        bool
+}
+
+func (m *Model) handleDialogKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	d := m.modal
+	if d == nil {
+		return m, nil
+	}
+	switch d.kind {
+	case dialogText:
+		return m.handleTextDialog(key, d)
+	case dialogMenu:
+		return m.handleMenuDialog(key, d)
+	case dialogConfirm:
+		return m.handleConfirmDialog(key, d)
+	case dialogMessage:
+		if key.Type == tea.KeyEnter || key.Type == tea.KeyEsc {
+			m.closeDialog()
+		}
+	case dialogSelectPlayer:
+		return m.handlePlayerDialog(key, d)
+	case dialogMultiPlayers:
+		return m.handleMultiPlayerDialog(key, d)
+	case dialogSelectSegment:
+		return m.handleSegmentDialog(key, d)
+	case dialogSelectPurchase:
+		return m.handlePurchaseDialog(key, d)
+	case dialogSelectBust:
+		return m.handleBustDialog(key, d)
+	case dialogSelectParticipant:
+		return m.handleParticipantDialog(key, d)
+	}
+	return m, nil
+}
+
+func (m *Model) handleTextDialog(key tea.KeyMsg, d *dialog) (tea.Model, tea.Cmd) {
+	switch key.Type {
+	case tea.KeyEsc:
+		m.closeDialog()
+	case tea.KeyEnter:
+		m.submitText(d)
+	case tea.KeyBackspace:
+		runes := []rune(d.input)
+		if len(runes) > 0 {
+			d.input = string(runes[:len(runes)-1])
+		}
+	case tea.KeySpace:
+		d.input += " "
+	case tea.KeyRunes:
+		if !key.Alt {
+			d.input += string(key.Runes)
+		}
+	case tea.KeyCtrlU:
+		d.input = ""
+	}
+	return m, nil
+}
+
+func (m *Model) submitText(d *dialog) {
+	value := strings.TrimSpace(d.input)
+	switch d.textPurpose {
+	case textTournamentName:
+		if value == "" {
+			m.setStatus("Tournament name is required.", true)
+			return
+		}
+		m.pendingName = value
+		m.modal = &dialog{kind: dialogMenu, purpose: menuTemplate, title: "Tournament template", choices: []string{"Use embedded default", "Browse YAML template", "Cancel"}}
+	case textBrowserFilename:
+		if m.browser == nil {
+			m.closeDialog()
+			return
+		}
+		path, err := m.browser.newPath(value)
+		if err != nil {
+			m.setStatus(err.Error(), true)
+			return
+		}
+		purpose := m.browser.purpose
+		m.modal = nil
+		m.browser = nil
+		m.saveBrowserDestination(path, purpose)
+	case textAddPlayer:
+		action := m.actionContext()
+		player, err := m.service.RegisterPlayer(context.Background(), value, false, action)
+		if errors.Is(err, tournament.ErrRestoreConfirmation) {
+			m.modal = &dialog{kind: dialogConfirm, title: "Restore removed player?", message: fmt.Sprintf("Restore %q and preserve its existing identity/history?", player.Name), confirm: confirmRestorePlayer, targetPlayer: player.ID, targetName: value}
+			return
+		}
+		if err != nil {
+			m.showMessage("Add player failed", err.Error())
+			return
+		}
+		m.modal = nil
+		m.refresh()
+		m.setStatus("Player registered. Buy-in is a separate action.", false)
+	case textRenamePlayer:
+		if err := m.service.RenamePlayer(context.Background(), d.targetPlayer, value, m.actionContext()); err != nil {
+			m.showMessage("Rename failed", err.Error())
+			return
+		}
+		m.modal = nil
+		m.refresh()
+		m.setStatus("Player name updated; history preserved.", false)
+	case textTournamentNameRename:
+		m.renameTournament(value)
+	case textRemoveExplanation:
+		if value == "" || len([]rune(value)) > 200 {
+			m.setStatus("Explanation must contain 1 to 200 characters.", true)
+			return
+		}
+		m.modal = &dialog{kind: dialogConfirm, title: "Remove player?", message: "The player identity will remain in audit history.", confirm: confirmRemovePlayer, targetPlayer: d.targetPlayer, targetName: value}
+	case textIncompleteEnd:
+		if value == "" || len([]rune(value)) > 200 {
+			m.setStatus("Explanation must contain 1 to 200 characters.", true)
+			return
+		}
+		m.modal = &dialog{kind: dialogConfirm, title: "End incomplete tournament?", message: "This will close the tournament without final standings.", confirm: confirmIncompleteEnd, targetName: value}
+	case textReopenExplanation:
+		if value == "" || len([]rune(value)) > 200 {
+			m.setStatus("Explanation must contain 1 to 200 characters.", true)
+			return
+		}
+		m.modal = &dialog{kind: dialogConfirm, title: "Reopen tournament?", message: "It will reopen paused. Settings remain locked; previous results remain history.", confirm: confirmReopen, targetName: value}
+	case textRemainingTime:
+		remaining, err := time.ParseDuration(value)
+		if err != nil || remaining < 0 {
+			m.setStatus("Enter a valid remaining duration, e.g. 10m or 90s.", true)
+			return
+		}
+		m.selectSegment(d.segmentIndex, &remaining)
+	case textVoidPurchaseExplanation:
+		if value == "" || len([]rune(value)) > 200 {
+			m.setStatus("Explanation must contain 1 to 200 characters.", true)
+			return
+		}
+		m.modal = &dialog{kind: dialogConfirm, title: "Void purchase?", message: "The original transaction will remain in history.", confirm: confirmVoidPurchase, targetPurchase: d.targetPurchase, targetName: value}
+	case textVoidBustExplanation:
+		if value == "" || len([]rune(value)) > 200 {
+			m.setStatus("Explanation must contain 1 to 200 characters.", true)
+			return
+		}
+		m.modal = &dialog{kind: dialogConfirm, title: "Void bust event?", message: "The original event will remain in history; dependent actions can block this correction.", confirm: confirmVoidBust, targetBustEvent: d.targetBustEvent, targetName: value}
+	case textCorrectBustExplanation:
+		if value == "" || len([]rune(value)) > 200 {
+			m.setStatus("Explanation must contain 1 to 200 characters.", true)
+			return
+		}
+		m.modal = &dialog{kind: dialogConfirm, title: "Correct bust participant?", message: "The original participant will remain in the audit trail.", confirm: confirmCorrectBust, targetName: value, participant: d.participant, replacement: d.replacement}
+	}
+}
+
+func (m *Model) handleMenuDialog(key tea.KeyMsg, d *dialog) (tea.Model, tea.Cmd) {
+	switch key.Type {
+	case tea.KeyEsc:
+		m.closeDialog()
+	case tea.KeyUp:
+		if len(d.choices) > 0 {
+			d.cursor = (d.cursor - 1 + len(d.choices)) % len(d.choices)
+		}
+	case tea.KeyDown:
+		if len(d.choices) > 0 {
+			d.cursor = (d.cursor + 1) % len(d.choices)
+		}
+	case tea.KeyEnter:
+		m.chooseMenu(d)
+	}
+	return m, nil
+}
+
+func (m *Model) chooseMenu(d *dialog) {
+	if d.cursor < 0 || d.cursor >= len(d.choices) {
+		return
+	}
+	switch d.purpose {
+	case menuTemplate:
+		switch d.cursor {
+		case 0:
+			m.modal = nil
+			m.completeNewTemplateChoice(true)
+		case 1:
+			m.modal = nil
+			m.startBrowser(browseTemplate, screenStartup)
+		case 2:
+			m.modal = nil
+		}
+	case menuPlayers:
+		switch d.cursor {
+		case 0:
+			m.modal = &dialog{kind: dialogText, title: "Add player", prompt: "Player name", textPurpose: textAddPlayer}
+		case 1:
+			m.openPlayerSelect(selectRename, nonRemoved(m.players))
+		case 2:
+			m.openPlayerSelect(selectRemove, nonRemoved(m.players))
+		case 3:
+			m.openPlayerSelect(selectSitOut, activePlayers(m.players))
+		case 4:
+			m.openVoidPurchase()
+		}
+	case menuSettings:
+		m.chooseSettings(d.cursor)
+	case menuBusts:
+		m.chooseBusts(d.cursor)
+	}
+}
+
+func (m *Model) chooseSettings(index int) {
+	switch index {
+	case 0:
+		m.startBrowser(browseSaveTemplate, screenMain)
+	case 1:
+		m.startBrowser(browseTemplate, screenMain)
+	case 2:
+		if m.record.Status != store.StatusNotStarted {
+			m.showMessage("Settings locked", store.ErrConfigurationLocked.Error())
+			return
+		}
+		m.modal = &dialog{kind: dialogText, title: "Rename tournament", prompt: "Tournament name", input: m.record.Name, textPurpose: textTournamentNameRename}
+	case 3:
+		m.startBrowser(browseSound, screenMain)
+	case 4:
+		m.prefs.SoundFile = ""
+		if err := preferences.Save(m.prefs); err != nil {
+			m.showMessage("Sound preference failed", err.Error())
+			return
+		}
+		m.modal = nil
+		m.setStatus("Using embedded notification sound.", false)
+	case 5:
+		m.modal = nil
+		m.toggleSound()
+	default:
+		if m.record.Status == store.StatusEnded {
+			m.modal = &dialog{kind: dialogText, title: "Reopen tournament", prompt: "Explanation (required, max 200 chars)", textPurpose: textReopenExplanation}
+		}
+	}
+}
+
+func (m *Model) chooseBusts(index int) {
+	switch index {
+	case 0:
+		players := activePlayers(m.players)
+		if len(players) < 2 {
+			m.showMessage("Record bust", "At least two active players are needed.")
+			return
+		}
+		m.modal = &dialog{kind: dialogMultiPlayers, purpose: selectBuster, title: "Select active buster(s)", players: players, selected: make(map[string]bool)}
+	case 1:
+		m.openBustEvents(selectVoidBust)
+	case 2:
+		m.openBustParticipants()
+	}
+}
+
+func (m *Model) handleConfirmDialog(key tea.KeyMsg, d *dialog) (tea.Model, tea.Cmd) {
+	if key.Type == tea.KeyEsc || key.Type == tea.KeyRunes && strings.EqualFold(key.String(), "n") {
+		m.closeDialog()
+		return m, nil
+	}
+	if key.Type == tea.KeyEnter || key.Type == tea.KeyRunes && strings.EqualFold(key.String(), "y") {
+		return m, m.confirmAction(d)
+	}
+	return m, nil
+}
+
+func (m *Model) confirmAction(d *dialog) tea.Cmd {
+	switch d.confirm {
+	case confirmStart:
+		m.modal = nil
+		if err := m.service.StartTournament(context.Background(), time.Now()); err != nil {
+			m.showMessage("Start failed", err.Error())
+			return nil
+		}
+		m.refresh()
+		m.setStatus("Settings locked. Tournament started.", false)
+	case confirmQuit:
+		return m.finishQuitCommand()
+	case confirmRestorePlayer:
+		player, err := m.service.RegisterPlayer(context.Background(), d.targetName, true, m.actionContext())
+		if err != nil {
+			m.showMessage("Restore failed", err.Error())
+			return nil
+		}
+		m.modal = nil
+		m.refresh()
+		m.setStatus(fmt.Sprintf("Restored %s with original identity.", player.Name), false)
+	case confirmCompletedEnd:
+		m.modal = nil
+		m.finalizeTournament("", nil)
+	case confirmIncompleteEnd:
+		m.modal = nil
+		m.finalizeTournament(d.targetName, nil)
+	case confirmReopen:
+		m.modal = nil
+		if err := m.service.ReopenTournament(context.Background(), d.targetName, tournament.ActionContext{}); err != nil {
+			m.showMessage("Reopen failed", err.Error())
+			return nil
+		}
+		m.refresh()
+		m.setStatus("Tournament reopened paused; settings remain locked.", false)
+	case confirmRemovePlayer:
+		m.modal = nil
+		if err := m.service.RemovePlayer(context.Background(), d.targetPlayer, d.targetName, m.actionContext()); err != nil {
+			m.showMessage("Remove player failed", err.Error())
+			return nil
+		}
+		m.refresh()
+		m.setStatus("Player removed; identity retained.", false)
+	case confirmVoidPurchase:
+		m.modal = nil
+		if err := m.service.VoidPurchase(context.Background(), d.targetPurchase, d.targetName, m.actionContext()); err != nil {
+			m.showMessage("Void purchase failed", err.Error())
+			return nil
+		}
+		m.refresh()
+		m.setStatus("Purchase voided; original transaction retained.", false)
+	case confirmVoidBust:
+		m.modal = nil
+		if err := m.service.VoidBust(context.Background(), d.targetBustEvent, d.targetName, m.actionContext()); err != nil {
+			m.showMessage("Void bust failed", err.Error())
+			return nil
+		}
+		m.refresh()
+		m.setStatus("Bust event voided; audit history retained.", false)
+	case confirmCorrectBust:
+		m.modal = nil
+		if err := m.service.CorrectBustParticipant(context.Background(), d.participant.BustEventID, d.participant.PlayerID, d.participant.Role, d.replacement, d.targetName, m.actionContext()); err != nil {
+			m.showMessage("Bust correction failed", err.Error())
+			return nil
+		}
+		m.refresh()
+		m.setStatus("Bust participant corrected; original and correction retained.", false)
+	}
+	if m.suspendedModal != nil && m.modal == nil {
+		m.modal, m.suspendedModal = m.suspendedModal, nil
+	}
+	return nil
+}
+
+func (m *Model) handlePlayerDialog(key tea.KeyMsg, d *dialog) (tea.Model, tea.Cmd) {
+	switch key.Type {
+	case tea.KeyEsc:
+		m.closeDialog()
+	case tea.KeyUp:
+		if len(d.players) > 0 {
+			d.cursor = (d.cursor - 1 + len(d.players)) % len(d.players)
+		}
+	case tea.KeyDown:
+		if len(d.players) > 0 {
+			d.cursor = (d.cursor + 1) % len(d.players)
+		}
+	case tea.KeyEnter:
+		if d.cursor >= 0 && d.cursor < len(d.players) {
+			m.choosePlayer(d, d.players[d.cursor])
+		}
+	}
+	return m, nil
+}
+
+func (m *Model) choosePlayer(d *dialog, player tournament.Player) {
+	switch d.purpose {
+	case selectPurchase:
+		_, err := m.service.Buy(context.Background(), player.ID, d.purchaseKind, m.actionContext())
+		if err != nil {
+			m.showMessage("Purchase failed", err.Error())
+			return
+		}
+		m.modal = nil
+		m.refresh()
+		m.setStatus(fmt.Sprintf("%s recorded for %s.", d.purchaseKind, player.Name), false)
+	case selectRename:
+		m.modal = &dialog{kind: dialogText, title: "Rename player", prompt: "Player name", input: player.Name, textPurpose: textRenamePlayer, targetPlayer: player.ID}
+	case selectRemove:
+		m.modal = &dialog{kind: dialogText, title: "Remove player", prompt: "Explanation (required, max 200 chars)", textPurpose: textRemoveExplanation, targetPlayer: player.ID}
+	case selectSitOut:
+		err := m.service.SetSittingOut(context.Background(), player.ID, !player.SittingOut, m.actionContext())
+		if err != nil {
+			m.showMessage("Sit-out update failed", err.Error())
+			return
+		}
+		m.modal = nil
+		m.refresh()
+		if player.SittingOut {
+			m.setStatus(player.Name+" returned to the table.", false)
+		} else {
+			m.setStatus(player.Name+" is sitting out but remains active.", false)
+		}
+	case selectRemainder:
+		m.recordRemainderChoice(player.ID)
+	case selectReplacement:
+		m.modal = &dialog{kind: dialogText, title: "Correct bust participant", prompt: "Explanation (required, max 200 chars)", textPurpose: textCorrectBustExplanation, participant: d.participant, replacement: &tournament.BustParticipant{PlayerID: player.ID, Role: d.participant.Role, Position: d.participant.Position, Tied: d.participant.Tied}}
+	}
+}
+
+func (m *Model) handleMultiPlayerDialog(key tea.KeyMsg, d *dialog) (tea.Model, tea.Cmd) {
+	switch key.Type {
+	case tea.KeyEsc:
+		m.closeDialog()
+	case tea.KeyUp:
+		if len(d.players) > 0 {
+			d.cursor = (d.cursor - 1 + len(d.players)) % len(d.players)
+		}
+	case tea.KeyDown:
+		if len(d.players) > 0 {
+			d.cursor = (d.cursor + 1) % len(d.players)
+		}
+	case tea.KeySpace:
+		if d.cursor >= 0 && d.cursor < len(d.players) {
+			id := d.players[d.cursor].ID
+			if d.selected[id] {
+				delete(d.selected, id)
+				d.selectedOrder = removeString(d.selectedOrder, id)
+			} else {
+				d.selected[id] = true
+				d.selectedOrder = append(d.selectedOrder, id)
+			}
+		}
+	case tea.KeyEnter:
+		m.advanceBustSelection(d)
+	case tea.KeyRunes:
+		if strings.EqualFold(key.String(), "t") && d.purpose == selectBustee && d.cursor >= 0 && d.cursor < len(d.players) {
+			id := d.players[d.cursor].ID
+			if d.selected[id] {
+				if d.tiedIDs == nil {
+					d.tiedIDs = make(map[string]bool)
+				}
+				d.tiedIDs[id] = !d.tiedIDs[id]
+			}
+		}
+	}
+	return m, nil
+}
+
+func (m *Model) advanceBustSelection(d *dialog) {
+	if len(d.selectedOrder) == 0 {
+		m.setStatus("Select at least one player.", true)
+		return
+	}
+	if d.purpose == selectBuster {
+		selected := make(map[string]bool, len(d.selectedOrder))
+		for _, id := range d.selectedOrder {
+			selected[id] = true
+		}
+		players := make([]tournament.Player, 0)
+		for _, player := range activePlayers(m.players) {
+			if !selected[player.ID] {
+				players = append(players, player)
+			}
+		}
+		if len(players) == 0 {
+			m.setStatus("At least one buster must not be among the bustees.", true)
+			return
+		}
+		m.modal = &dialog{kind: dialogMultiPlayers, purpose: selectBustee, title: "Select bustee(s) in finishing order", players: players, selected: make(map[string]bool), busters: append([]string(nil), d.selectedOrder...), tiedIDs: make(map[string]bool)}
+		return
+	}
+	busters := append([]string(nil), d.busters...)
+	bustees := buildBustees(d.selectedOrder, d.tiedIDs)
+	_, err := m.service.RecordBust(context.Background(), tournament.BustRequest{Busters: busters, Bustees: bustees}, m.actionContext())
+	if err != nil {
+		m.showMessage("Bust record failed", err.Error())
+		return
+	}
+	m.modal = nil
+	m.refresh()
+	m.setStatus("Bust event recorded.", false)
+}
+
+func buildBustees(order []string, tied map[string]bool) []tournament.Bustee {
+	result := make([]tournament.Bustee, 0, len(order))
+	position := 1
+	for index := 0; index < len(order); {
+		end := index + 1
+		if tied[order[index]] {
+			for end < len(order) && tied[order[end]] {
+				end++
+			}
+		}
+		if end-index > 1 {
+			for _, id := range order[index:end] {
+				result = append(result, tournament.Bustee{PlayerID: id, Position: position, Tied: true})
+			}
+			position++
+			index = end
+			continue
+		}
+		result = append(result, tournament.Bustee{PlayerID: order[index], Position: position})
+		position++
+		index++
+	}
+	return result
+}
+
+func (m *Model) handleSegmentDialog(key tea.KeyMsg, d *dialog) (tea.Model, tea.Cmd) {
+	switch key.Type {
+	case tea.KeyEsc:
+		m.closeDialog()
+	case tea.KeyUp:
+		if len(d.choices) > 0 {
+			d.cursor = (d.cursor - 1 + len(d.choices)) % len(d.choices)
+		}
+	case tea.KeyDown:
+		if len(d.choices) > 0 {
+			d.cursor = (d.cursor + 1) % len(d.choices)
+		}
+	case tea.KeyEnter:
+		m.selectSegment(d.cursor+1, nil)
+	case tea.KeyRunes:
+		if strings.EqualFold(key.String(), "t") && d.cursor >= 0 && d.cursor < len(d.choices) {
+			m.modal = &dialog{kind: dialogText, title: "Set remaining time", prompt: "Duration, e.g. 10m or 90s", textPurpose: textRemainingTime, segmentIndex: d.cursor + 1}
+		}
+	}
+	return m, nil
+}
+
+func (m *Model) selectSegment(index int, remaining *time.Duration) {
+	transitions, err := m.service.SelectSegment(context.Background(), index, remaining, m.actionContext())
+	if err != nil {
+		m.showMessage("Level selection failed", err.Error())
+		return
+	}
+	m.modal = nil
+	m.refresh()
+	if len(transitions) > 0 {
+		m.notice = transitionNotice(transitions, m.record.Config.Schedule)
+	}
+	m.setStatus("Tournament segment changed and audited.", false)
+}
+
+func (m *Model) handlePurchaseDialog(key tea.KeyMsg, d *dialog) (tea.Model, tea.Cmd) {
+	switch key.Type {
+	case tea.KeyEsc:
+		m.closeDialog()
+	case tea.KeyUp:
+		if len(d.purchases) > 0 {
+			d.cursor = (d.cursor - 1 + len(d.purchases)) % len(d.purchases)
+		}
+	case tea.KeyDown:
+		if len(d.purchases) > 0 {
+			d.cursor = (d.cursor + 1) % len(d.purchases)
+		}
+	case tea.KeyEnter:
+		if d.cursor < 0 || d.cursor >= len(d.purchases) {
+			return m, nil
+		}
+		purchase := d.purchases[d.cursor]
+		if purchase.VoidedByEventID != nil {
+			m.setStatus("Purchase already voided.", true)
+			return m, nil
+		}
+		m.modal = &dialog{kind: dialogText, title: "Void purchase", prompt: "Explanation (required, max 200 chars)", textPurpose: textVoidPurchaseExplanation, targetPurchase: purchase.ID}
+	}
+	return m, nil
+}
+
+func (m *Model) handleBustDialog(key tea.KeyMsg, d *dialog) (tea.Model, tea.Cmd) {
+	switch key.Type {
+	case tea.KeyEsc:
+		m.closeDialog()
+	case tea.KeyUp:
+		if len(d.bustEvents) > 0 {
+			d.cursor = (d.cursor - 1 + len(d.bustEvents)) % len(d.bustEvents)
+		}
+	case tea.KeyDown:
+		if len(d.bustEvents) > 0 {
+			d.cursor = (d.cursor + 1) % len(d.bustEvents)
+		}
+	case tea.KeyEnter:
+		if d.cursor < 0 || d.cursor >= len(d.bustEvents) {
+			return m, nil
+		}
+		id := d.bustEvents[d.cursor]
+		if d.purpose == selectVoidBust {
+			m.modal = &dialog{kind: dialogText, title: "Void bust event", prompt: "Explanation (required, max 200 chars)", textPurpose: textVoidBustExplanation, targetBustEvent: id}
+		} else {
+			m.showParticipantPicker(id)
+		}
+	}
+	return m, nil
+}
+
+func (m *Model) handleParticipantDialog(key tea.KeyMsg, d *dialog) (tea.Model, tea.Cmd) {
+	switch key.Type {
+	case tea.KeyEsc:
+		m.closeDialog()
+	case tea.KeyUp:
+		if len(d.participants) > 0 {
+			d.cursor = (d.cursor - 1 + len(d.participants)) % len(d.participants)
+		}
+	case tea.KeyDown:
+		if len(d.participants) > 0 {
+			d.cursor = (d.cursor + 1) % len(d.participants)
+		}
+	case tea.KeyEnter:
+		if d.cursor < 0 || d.cursor >= len(d.participants) {
+			return m, nil
+		}
+		participant := d.participants[d.cursor]
+		players := nonRemoved(m.players)
+		m.modal = &dialog{kind: dialogSelectPlayer, purpose: selectReplacement, title: "Replacement participant", players: players, participant: participant}
+	case tea.KeyRunes:
+		if strings.EqualFold(key.String(), "d") && d.cursor >= 0 && d.cursor < len(d.participants) {
+			participant := d.participants[d.cursor]
+			m.modal = &dialog{kind: dialogText, title: "Remove bust participant", prompt: "Explanation (required, max 200 chars)", textPurpose: textCorrectBustExplanation, participant: participant}
+		}
+	}
+	return m, nil
+}
+
+func (m *Model) openBustEvents(purpose dialogPurpose) {
+	events, err := m.database.Events(context.Background())
+	if err != nil {
+		m.showMessage("Bust history failed", err.Error())
+		return
+	}
+	voided := make(map[int64]bool)
+	for _, event := range events {
+		if event.Kind == "bust_voided" && event.VoidEventID != nil {
+			voided[*event.VoidEventID] = true
+		}
+	}
+	var bustEvents []int64
+	var labels []string
+	for _, event := range events {
+		if event.Kind != "bust_recorded" || voided[event.ID] {
+			continue
+		}
+		bustEvents = append(bustEvents, event.ID)
+		var payload struct {
+			Busters []string            `json:"busters"`
+			Bustees []tournament.Bustee `json:"bustees"`
+		}
+		_ = json.Unmarshal(event.Payload, &payload)
+		labels = append(labels, fmt.Sprintf("Bust #%d · %d buster(s), %d bustee(s) · %s", event.ID, len(payload.Busters), len(payload.Bustees), event.WallTime.Format("15:04:05")))
+	}
+	if len(bustEvents) == 0 {
+		m.showMessage("Bust history", "No valid bust events.")
+		return
+	}
+	m.modal = &dialog{kind: dialogSelectBust, purpose: purpose, title: "Select bust event", bustEvents: bustEvents, bustLabels: labels}
+}
+
+func (m *Model) showParticipantPicker(bustID int64) {
+	var participants []bustParticipantOption
+	err := m.database.ViewTx(context.Background(), func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(context.Background(), `SELECT player_id, role, finishing_order, tied FROM bust_participants
+			WHERE event_id = ? AND voided_by_event_id IS NULL ORDER BY role, finishing_order, player_id`, bustID)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var option bustParticipantOption
+			var tied int
+			if err := rows.Scan(&option.PlayerID, &option.Role, &option.Position, &tied); err != nil {
+				return err
+			}
+			option.BustEventID, option.Tied = bustID, tied != 0
+			participants = append(participants, option)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		m.showMessage("Bust participants unavailable", err.Error())
+		return
+	}
+	if len(participants) == 0 {
+		m.showMessage("Bust participants", "No uncorrected participants remain in that bust event.")
+		return
+	}
+	m.modal = &dialog{kind: dialogSelectParticipant, purpose: selectCorrectBust, title: "Select participant to correct", participants: participants}
+}
+
+func (m *Model) recordRemainderChoice(playerID string) {
+	if m.pendingEndChoices == nil {
+		m.pendingEndChoices = make(map[int][]string)
+	}
+	m.pendingEndChoices[m.pendingRemainderPlace] = append(m.pendingEndChoices[m.pendingRemainderPlace], playerID)
+	m.pendingRemainderCount--
+	if m.pendingRemainderCount > 0 {
+		m.openRemainderPicker()
+		return
+	}
+	m.pendingPrizeGroupIndex++
+	m.openRemainderPicker()
+}
+
+func (m *Model) openRemainderPicker() {
+	for m.pendingPrizeGroupIndex < len(m.pendingPrizeGroups) {
+		group := m.pendingPrizeGroups[m.pendingPrizeGroupIndex]
+		pending := int(group.PendingRemainderCents / 10)
+		if pending == 0 {
+			m.pendingPrizeGroupIndex++
+			continue
+		}
+		if m.pendingRemainderCount == 0 {
+			m.pendingRemainderPlace = group.FirstPlace
+			m.pendingRemainderCount = pending
+		}
+		chosen := make(map[string]bool)
+		for _, id := range m.pendingEndChoices[group.FirstPlace] {
+			chosen[id] = true
+		}
+		var players []tournament.Player
+		for _, entry := range group.Players {
+			id := entry.PlayerID
+			if chosen[id] {
+				continue
+			}
+			if player, ok := m.playerByID(id); ok {
+				players = append(players, player)
+			}
+		}
+		m.modal = &dialog{kind: dialogSelectPlayer, purpose: selectRemainder, title: fmt.Sprintf("Choose player receiving extra €0.10 — place %d", group.FirstPlace), players: players}
+		return
+	}
+	m.finalizeTournament(m.pendingEndExplanation, m.pendingEndChoices)
+}
+
+func (m *Model) finalizeTournament(explanation string, choices map[int][]string) {
+	result, err := m.service.EndTournament(context.Background(), explanation, choices, m.actionContext())
+	if err != nil {
+		var pending *tournament.PendingPrizeChoicesError
+		if errors.As(err, &pending) {
+			m.pendingEndExplanation = explanation
+			m.pendingEndChoices = choices
+			m.pendingPrizeGroups = pending.Groups
+			m.pendingPrizeGroupIndex = 0
+			m.pendingRemainderCount = 0
+			m.openRemainderPicker()
+			return
+		}
+		m.showMessage("End failed", err.Error())
+		return
+	}
+	m.modal = nil
+	m.pendingEndExplanation = ""
+	m.pendingEndChoices = nil
+	m.pendingPrizeGroups = nil
+	m.refresh()
+	if result.Completed {
+		m.setStatus("Tournament finalized; payouts saved.", false)
+	} else {
+		m.setStatus("Tournament ended incomplete; no final standings recorded.", false)
+	}
+}
+
+func (m *Model) openVoidPurchase() {
+	purchases, err := m.service.Purchases(context.Background(), "")
+	if err != nil {
+		m.showMessage("Purchases unavailable", err.Error())
+		return
+	}
+	if len(purchases) == 0 {
+		m.showMessage("Purchases", "No purchase transactions exist.")
+		return
+	}
+	m.modal = &dialog{kind: dialogSelectPurchase, purpose: selectVoidPurchase, title: "Select purchase to void", purchases: purchases}
+}
+
+func (m *Model) playerByID(id string) (tournament.Player, bool) {
+	for _, player := range m.players {
+		if player.ID == id {
+			return player, true
+		}
+	}
+	return tournament.Player{}, false
+}
+
+func (m *Model) closeDialog() {
+	m.modal = nil
+	if m.suspendedModal != nil && !m.tooSmall {
+		m.modal, m.suspendedModal = m.suspendedModal, nil
+	}
+}
+
+func (m *Model) openBustParticipants() {
+	if m.database == nil {
+		return
+	}
+	var participants []bustParticipantOption
+	err := m.database.ViewTx(context.Background(), func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(context.Background(), `SELECT bp.event_id, bp.player_id, bp.role, bp.finishing_order, bp.tied
+			FROM bust_participants bp JOIN busts b ON b.event_id = bp.event_id
+			WHERE bp.voided_by_event_id IS NULL AND b.voided_by_event_id IS NULL
+			ORDER BY bp.event_id DESC, bp.role, bp.finishing_order, bp.player_id`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var item bustParticipantOption
+			var tied int
+			if err := rows.Scan(&item.BustEventID, &item.PlayerID, &item.Role, &item.Position, &tied); err != nil {
+				return err
+			}
+			item.Tied = tied != 0
+			participants = append(participants, item)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		m.showMessage("Bust participants unavailable", err.Error())
+		return
+	}
+	if len(participants) == 0 {
+		m.showMessage("Bust participants", "No uncorrected participants remain.")
+		return
+	}
+	m.modal = &dialog{kind: dialogSelectParticipant, purpose: selectCorrectBust, title: "Select participant to correct", participants: participants}
+}
+
+func nonRemoved(players []tournament.Player) []tournament.Player {
+	var result []tournament.Player
+	for _, player := range players {
+		if !player.Removed {
+			result = append(result, player)
+		}
+	}
+	return result
+}
+
+func removeString(values []string, target string) []string {
+	for index, value := range values {
+		if value == target {
+			return append(values[:index], values[index+1:]...)
+		}
+	}
+	return values
+}
+
+func (m *Model) saveTemplateImport(path string) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		m.showMessage("Template read failed", err.Error())
+		return
+	}
+	template, err := config.ParseTemplate(data)
+	if err != nil {
+		m.showMessage("Invalid template", err.Error())
+		return
+	}
+	action := m.actionContext()
+	if err := m.service.UpdateConfiguration(context.Background(), template, action); err != nil {
+		m.showMessage("Settings import failed", err.Error())
+		return
+	}
+	m.modal = nil
+	m.refresh()
+	m.setStatus("Tournament settings imported and audited.", false)
+}
+
+func (m *Model) renameTournament(name string) {
+	action := m.actionContext()
+	if action.Checkpoint != nil {
+		m.showMessage("Rename failed", store.ErrConfigurationLocked.Error())
+		return
+	}
+	if err := m.database.RenameTournament(context.Background(), name, action.WallTime); err != nil {
+		m.showMessage("Rename failed", err.Error())
+		return
+	}
+	m.modal = nil
+	m.refresh()
+	m.setStatus("Tournament renamed.", false)
+}

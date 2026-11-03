@@ -161,6 +161,19 @@ func TestTiedPrizeRemainderRequiresOperatorChoiceAndConservesPool(t *testing.T) 
 	if persistedPlayers != 3 {
 		t.Fatalf("persisted final prize players = %d, want 3", persistedPlayers)
 	}
+	stored, err := service.LatestFinalResult(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	storedAmounts := make(map[string]int64)
+	for _, group := range stored.Prizes {
+		for _, player := range group.Players {
+			storedAmounts[player.PlayerID] = player.AmountCents
+		}
+	}
+	if storedAmounts[players[2].ID] != 10 || storedAmounts[players[1].ID] != 0 || stored.PoolCents != 30 {
+		t.Fatalf("stored final result lost remainder choice: %+v", stored)
+	}
 }
 
 func TestCurrentPrizesRemainProvisionalBeforeEnd(t *testing.T) {

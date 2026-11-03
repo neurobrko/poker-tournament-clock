@@ -70,6 +70,7 @@ type TournamentRecord struct {
 	EndedAt            *time.Time
 	Checkpoint         Checkpoint
 	RegistrationClosed bool
+	ResultCompleted    *bool
 }
 
 type Checkpoint struct {
@@ -367,11 +368,12 @@ func (s *Store) Tournament(ctx context.Context) (TournamentRecord, error) {
 	var segment int
 	var running, registrationClosed, segmentFinished, pendingIndex int
 	var holdReason sql.NullString
+	var resultCompleted sql.NullInt64
 	err := s.db.QueryRowContext(ctx, `SELECT name, status, configuration_json, created_at, updated_at,
 		started_at, ended_at, clock_elapsed_ns, real_elapsed_ns, segment_index, remaining_ns,
-		clock_running, registration_closed, segment_finished, hold_reason, pending_segment_index FROM tournament WHERE id = 1`).Scan(
+		clock_running, registration_closed, segment_finished, hold_reason, pending_segment_index, result_completed FROM tournament WHERE id = 1`).Scan(
 		&record.Name, &record.Status, &configJSON, &created, &updated, &started, &ended,
-		&clockNS, &realNS, &segment, &remainingNS, &running, &registrationClosed, &segmentFinished, &holdReason, &pendingIndex)
+		&clockNS, &realNS, &segment, &remainingNS, &running, &registrationClosed, &segmentFinished, &holdReason, &pendingIndex, &resultCompleted)
 	if err != nil {
 		return TournamentRecord{}, err
 	}
@@ -410,6 +412,10 @@ func (s *Store) Tournament(ctx context.Context) (TournamentRecord, error) {
 		record.Checkpoint.HoldReason = holdReason.String
 	}
 	record.RegistrationClosed = registrationClosed != 0
+	if resultCompleted.Valid {
+		value := resultCompleted.Int64 != 0
+		record.ResultCompleted = &value
+	}
 	return record, nil
 }
 
@@ -417,6 +423,9 @@ func (s *Store) recoverOnOpen(ctx context.Context) error {
 	record, err := s.Tournament(ctx)
 	if err != nil {
 		return err
+	}
+	if record.Status == StatusEnded {
+		return nil
 	}
 	checkpoint := record.Checkpoint
 	if record.StartedAt != nil {
