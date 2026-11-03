@@ -218,6 +218,45 @@ func TestConfiguredAddonAndRebuyFlagsAreEnforced(t *testing.T) {
 	}
 }
 
+func TestVoidingEntryBelowTwoEntrantsPausesRunningClock(t *testing.T) {
+	service, database := newTestService(t)
+	defer database.Close()
+	ctx := context.Background()
+	purchases := make([]Purchase, 2)
+	for index, name := range []string{"A", "B"} {
+		player, err := service.RegisterPlayer(ctx, name, false, ActionContext{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		purchase, err := service.Buy(ctx, player.ID, PurchaseInitialBuyIn, ActionContext{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		purchases[index] = purchase
+	}
+	if err := service.StartTournament(ctx, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	record, err := database.Tournament(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpoint := record.Checkpoint
+	if err := service.VoidPurchase(ctx, purchases[1].ID, "mistaken entrant", ActionContext{Checkpoint: &checkpoint}); err != nil {
+		t.Fatal(err)
+	}
+	record, err = database.Tournament(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Status != store.StatusPaused || record.Checkpoint.Running {
+		t.Fatalf("clock did not pause after entrants fell below two: %+v", record)
+	}
+	if _, err := service.ResumeTournament(ctx, ActionContext{Checkpoint: &record.Checkpoint}); !errors.Is(err, ErrInsufficientEntrants) {
+		t.Fatalf("resume with one valid entrant = %v", err)
+	}
+}
+
 func markStartedAt(t *testing.T, database *store.Store, segment int, finished bool) {
 	t.Helper()
 	remaining := int64(5 * time.Minute)

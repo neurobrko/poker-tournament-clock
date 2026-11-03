@@ -279,13 +279,13 @@ func (s *Service) SelectSegment(ctx context.Context, index int, remaining *time.
 	}
 	recovery := false
 	if index >= 1 && index <= len(record.Config.Schedule) && record.Config.Schedule[index-1].Kind == config.SegmentLevel {
-		available, _, _, err := domain.LevelAvailability(record.Config.Schedule[index-1], availability.TotalChips, availability.ActivePlayers)
+		available, _, reason, err := domain.LevelAvailability(record.Config.Schedule[index-1], availability.TotalChips, availability.ActivePlayers)
 		if err != nil {
 			return nil, err
 		}
 		if !available {
 			if record.Status != store.StatusPaused || registrationOpen(record.Config, action.Checkpoint.SegmentIndex, action.Checkpoint.SegmentFinished, true) {
-				return nil, domain.ErrUnavailableLevel
+				return nil, fmt.Errorf("%w: level %d %s", domain.ErrUnavailableLevel, index, reason)
 			}
 			playable := false
 			for _, segment := range record.Config.Schedule {
@@ -299,7 +299,7 @@ func (s *Service) SelectSegment(ctx context.Context, index int, remaining *time.
 				playable = playable || ok
 			}
 			if playable {
-				return nil, domain.ErrUnavailableLevel
+				return nil, fmt.Errorf("%w: no level is unavailable for registration recovery while another level is playable; level %d %s", domain.ErrUnavailableLevel, index, reason)
 			}
 			recovery = true
 		}
@@ -374,10 +374,23 @@ func reconcileClockAfterStateChange(ctx context.Context, tx *sql.Tx, checkpoint 
 	if err != nil {
 		return err
 	}
+	var entrants int64
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM purchases WHERE kind = 'initial_buy_in'
+		AND voided_by_event_id IS NULL`).Scan(&entrants); err != nil {
+		return err
+	}
 	availability := domain.Availability{TotalChips: total, ActivePlayers: active}
-	transitions := clock.AvailabilityChanged(availability)
+	var transitions []domain.Transition
 	pauseReason := ""
-	if !clock.SegmentFinished && clock.SegmentIndex > 0 && clock.SegmentIndex <= len(template.Schedule) {
+	if entrants < 2 {
+		pauseReason = "fewer than two valid entrants remain"
+		if err := clock.Pause(); err != nil {
+			return err
+		}
+	} else {
+		transitions = clock.AvailabilityChanged(availability)
+	}
+	if pauseReason == "" && !clock.SegmentFinished && clock.SegmentIndex > 0 && clock.SegmentIndex <= len(template.Schedule) {
 		segment := template.Schedule[clock.SegmentIndex-1]
 		if segment.Kind == config.SegmentLevel {
 			available, _, reason, err := domain.LevelAvailability(segment, total, active)

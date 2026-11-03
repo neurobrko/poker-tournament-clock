@@ -112,6 +112,10 @@ func TestUnavailableLevelRecoveryJumpRequiresClosedRegistrationAndPausedClock(t 
 		t.Fatal(err)
 	}
 	record := mustTournament(t, database)
+	clock := record.Checkpoint
+	if _, err := service.SelectSegment(ctx, 3, nil, ActionContext{Checkpoint: &clock}); !errors.Is(err, domain.ErrUnavailableLevel) {
+		t.Fatalf("recovery selection while clock running = %v", err)
+	}
 	for _, player := range players {
 		purchases, err := service.Purchases(ctx, player.ID)
 		if err != nil {
@@ -122,17 +126,9 @@ func TestUnavailableLevelRecoveryJumpRequiresClosedRegistrationAndPausedClock(t 
 		}
 		record = mustTournament(t, database)
 	}
-	if !record.RegistrationClosed || record.Checkpoint.PendingIndex != 3 || record.Status != store.StatusRunning {
+	if !record.RegistrationClosed || record.Checkpoint.PendingIndex != 3 || record.Status != store.StatusPaused || record.Checkpoint.Running {
 		t.Fatalf("pre-recovery blocked state = %+v", record)
 	}
-	clock := record.Checkpoint
-	if _, err := service.SelectSegment(ctx, 1, nil, ActionContext{Checkpoint: &clock}); !errors.Is(err, domain.ErrUnavailableLevel) {
-		t.Fatalf("recovery jump while running = %v", err)
-	}
-	if err := service.PauseTournament(ctx, ActionContext{Checkpoint: &clock}); err != nil {
-		t.Fatal(err)
-	}
-	record = mustTournament(t, database)
 	clock = record.Checkpoint
 	if _, err := service.SelectSegment(ctx, 1, nil, ActionContext{Checkpoint: &clock}); err != nil {
 		t.Fatalf("paused registration recovery selection: %v", err)
