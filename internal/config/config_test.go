@@ -54,8 +54,16 @@ func TestDefaultTemplate(t *testing.T) {
 	if template.Registration.RegistrationDeadline != (Deadline{At: DeadlineAtBreakEnd, Target: 1}) {
 		t.Errorf("registration deadline = %+v", template.Registration.RegistrationDeadline)
 	}
-	if got := template.PrizeTiers[0].Percentages; !reflect.DeepEqual(got, []Percentage{"60", "25", "15"}) {
-		t.Errorf("default payouts = %v", got)
+	wantTiers := []PrizeTier{
+		{MinPlayers: 2, Percentages: []Percentage{"70", "30"}},
+		{MinPlayers: 5, Percentages: []Percentage{"60", "25", "15"}},
+		{MinPlayers: 10, Percentages: []Percentage{"40", "30", "20", "10"}},
+	}
+	if !reflect.DeepEqual(template.PrizeTiers, wantTiers) {
+		t.Fatalf("default prize tiers = %+v, want %+v", template.PrizeTiers, wantTiers)
+	}
+	if err := template.Validate(); err != nil {
+		t.Fatalf("default payout tiers are invalid: %v", err)
 	}
 }
 
@@ -119,18 +127,28 @@ func TestTemplateValidationRejectsUnknownFieldsAndVersions(t *testing.T) {
 }
 
 func TestPrizePercentagesAreValidatedExactly(t *testing.T) {
-	valid := replaceFirst(t, "percentages: [60, 25, 15]", "percentages: [60.00, 25.0, 15.00]")
-	template, err := ParseTemplate(valid)
+	template, err := DefaultTemplate()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := template.PrizeTiers[0].Percentages[0]; got != "60.00" {
+	template.PrizeTiers[0].Percentages = []Percentage{"60.00", "25.0", "15.00"}
+	encoded, err := MarshalTemplate(template)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := ParseTemplate(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := parsed.PrizeTiers[0].Percentages[0]; got != "60.00" {
 		t.Fatalf("percentage representation = %q, want original precision", got)
 	}
 
-	invalid := replaceFirst(t, "percentages: [60, 25, 15]", "percentages: [60, 25, 14]")
-	if _, err := ParseTemplate(invalid); err == nil {
-		t.Fatal("ParseTemplate accepted percentages that do not sum to 100")
+	invalid := template
+	invalid.PrizeTiers = append([]PrizeTier(nil), template.PrizeTiers...)
+	invalid.PrizeTiers[0].Percentages = []Percentage{"60", "25", "14"}
+	if err := invalid.Validate(); err == nil {
+		t.Fatal("Validate accepted percentages that do not sum to 100")
 	}
 }
 

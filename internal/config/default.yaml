@@ -102,4 +102,8 @@ schedule:
       kind: none
 prize_tiers:
   - min_players: 2
+    percentages: [70, 30]
+  - min_players: 5
     percentages: [60, 25, 15]
+  - min_players: 10
+    percentages: [40, 30, 20, 10]
