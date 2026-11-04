@@ -25,15 +25,16 @@ type Inhibitor struct {
 }
 
 type x11Settings struct {
-	blanking      string
-	exposures     string
-	timeout       int
-	cycle         int
-	standby       int
-	suspend       int
-	off           int
-	dpmsEnabled   bool
-	dpmsAvailable bool
+	blanking              string
+	exposures             string
+	timeout               int
+	cycle                 int
+	standby               int
+	suspend               int
+	off                   int
+	dpmsEnabled           bool
+	dpmsAvailable         bool
+	dpmsTimeoutsAvailable bool
 }
 
 func New() *Inhibitor { return &Inhibitor{} }
@@ -146,11 +147,14 @@ func x11DisplayScript() (string, error) {
 		settings.timeout, settings.cycle, blanking, exposures)
 	if settings.dpmsAvailable {
 		disable += " -dpms"
+		if settings.dpmsTimeoutsAvailable {
+			restore += fmt.Sprintf("; xset dpms %d %d %d", settings.standby, settings.suspend, settings.off)
+		}
 		dpms := "-dpms"
 		if settings.dpmsEnabled {
 			dpms = "+dpms"
 		}
-		restore += fmt.Sprintf("; xset dpms %d %d %d; xset %s", settings.standby, settings.suspend, settings.off, dpms)
+		restore += "; xset " + dpms
 	} else {
 		// Screen-saver blanking can still be inhibited; the server exposes no DPMS state to restore.
 		return disable + " || exit 1; trap '" + restore + "' EXIT; trap 'exit 0' HUP INT TERM; cat >/dev/null",
@@ -174,21 +178,24 @@ func parseX11Settings(output string) (x11Settings, error) {
 	if settings.cycle, err = strconv.Atoi(screen[4]); err != nil {
 		return settings, err
 	}
-	dpms := regexp.MustCompile(`(?s)Standby:\s*(\d+)\s+Suspend:\s*(\d+)\s+Off:\s*(\d+).*?DPMS is (Enabled|Disabled)`).FindStringSubmatch(output)
-	if len(dpms) != 5 {
-		return settings, nil
+	dpmsState := regexp.MustCompile(`(?m)DPMS is (Enabled|Disabled)`).FindStringSubmatch(output)
+	if len(dpmsState) == 2 {
+		settings.dpmsAvailable = true
+		settings.dpmsEnabled = dpmsState[1] == "Enabled"
 	}
-	settings.dpmsAvailable = true
-	if settings.standby, err = strconv.Atoi(dpms[1]); err != nil {
-		return settings, err
+	dpmsTimeouts := regexp.MustCompile(`(?m)Standby:\s*(\d+)\s+Suspend:\s*(\d+)\s+Off:\s*(\d+)`).FindStringSubmatch(output)
+	if len(dpmsTimeouts) == 4 {
+		settings.dpmsTimeoutsAvailable = true
+		if settings.standby, err = strconv.Atoi(dpmsTimeouts[1]); err != nil {
+			return settings, err
+		}
+		if settings.suspend, err = strconv.Atoi(dpmsTimeouts[2]); err != nil {
+			return settings, err
+		}
+		if settings.off, err = strconv.Atoi(dpmsTimeouts[3]); err != nil {
+			return settings, err
+		}
 	}
-	if settings.suspend, err = strconv.Atoi(dpms[2]); err != nil {
-		return settings, err
-	}
-	if settings.off, err = strconv.Atoi(dpms[3]); err != nil {
-		return settings, err
-	}
-	settings.dpmsEnabled = dpms[4] == "Enabled"
 	return settings, nil
 }
 

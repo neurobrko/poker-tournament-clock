@@ -6,7 +6,11 @@ import (
 	"strings"
 	"testing"
 
+	"git.mpx.sk/elvis/poker_clock/internal/config"
+	"git.mpx.sk/elvis/poker_clock/internal/domain"
+	"git.mpx.sk/elvis/poker_clock/internal/tournament"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 func TestStartupScreenOffersNewLoadQuit(t *testing.T) {
@@ -156,6 +160,57 @@ func TestSaveDatabaseBrowserNOpensFilenameDialog(t *testing.T) {
 	}
 	if model.modal.input != "" || !strings.Contains(model.modal.prompt, "friday-game.sqlite") {
 		t.Fatalf("filename prompt should be empty with a visible default: %+v", model.modal)
+	}
+	if view := model.View(); !strings.Contains(view, "New file") || !strings.Contains(view, "friday-game.sqlite") {
+		t.Fatalf("filename prompt is hidden behind browser: %s", view)
+	}
+	model.onKey(tea.KeyMsg(tea.Key{Type: tea.KeyRunes, Runes: []rune{'a', 'b', 'c'}}))
+	if model.modal.input != "abc" {
+		t.Fatalf("filename input = %q, want abc", model.modal.input)
+	}
+}
+
+func TestClockPresentationUsesLargeCenteredTimerAndZeroAnte(t *testing.T) {
+	if got := formatAnte(config.AnteConfig{Kind: config.AnteNone}); got != "Ante  0" {
+		t.Fatalf("no-ante label = %q", got)
+	}
+	if got := lipgloss.Height(largeTimer("20:00")); got != 5 {
+		t.Fatalf("large timer height = %d, want 5 rows", got)
+	}
+}
+
+func TestTournamentPanelShowsPlacesInsteadOfPlayerNames(t *testing.T) {
+	model := NewModel()
+	model.record.Name = "Friday game"
+	model.summary.PrizePoolCents = 1000
+	model.players = []tournament.Player{{ID: "p1", Name: "Alice"}, {ID: "p2", Name: "Bob"}}
+	model.prizes = []domain.PrizeGroup{
+		{FirstPlace: 1, LastPlace: 1, TotalCents: 600, Players: []domain.PlayerPrize{{PlayerID: "p1", AmountCents: 600}}},
+		{FirstPlace: 2, LastPlace: 2, TotalCents: 400, Players: []domain.PlayerPrize{{PlayerID: "p2", AmountCents: 400}}},
+	}
+	view := model.leftPanel()
+	if !strings.Contains(view, "Friday game") || !strings.Contains(view, "Winner") || !strings.Contains(view, "2nd place") {
+		t.Fatalf("tournament panel missing name or place labels:\n%s", view)
+	}
+	if strings.Contains(view, "Alice") || strings.Contains(view, "Bob") {
+		t.Fatalf("tournament panel exposes player names in prizes:\n%s", view)
+	}
+}
+
+func TestMainLayoutUsesTwoFiveTwoColumnsAndFillsHeight(t *testing.T) {
+	left, center, right := columnWidths(180)
+	if left != 40 || center != 100 || right != 40 {
+		t.Fatalf("180-column layout = %d/%d/%d, want 40/100/40", left, center, right)
+	}
+	left, center, right = columnWidths(120)
+	if left != 26 || center != 66 || right != 28 {
+		t.Fatalf("minimum layout = %d/%d/%d, want 26/66/28", left, center, right)
+	}
+	model := NewModel()
+	model.screen = screenMain
+	model.width, model.height = 120, 36
+	if got := lipgloss.Height(model.mainView()); got != 36 {
+		t.Fatalf("main view height = %d, want full 36-row screen", got)
 	}
 }
 

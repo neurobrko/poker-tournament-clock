@@ -24,11 +24,11 @@ func (m *Model) View() string {
 	if m.tooSmall {
 		return m.smallTerminalView()
 	}
-	if m.browser != nil {
-		return m.browserView()
-	}
 	if m.modal != nil {
 		return m.dialogView(m.modal)
+	}
+	if m.browser != nil {
+		return m.browserView()
 	}
 	if m.screen == screenRules {
 		return m.rulesView()
@@ -137,16 +137,11 @@ func browserTitle(purpose browserPurpose) string {
 }
 
 func (m *Model) mainView() string {
-	rightWidth := m.width / 7
-	if rightWidth < 28 {
-		rightWidth = 28
-	}
-	remainingWidth := m.width - rightWidth
-	leftWidth := remainingWidth / 3
-	centerWidth := remainingWidth - leftWidth
-	left := panel("TOURNAMENT", leftWidth, m.leftPanel())
-	center := panel("CLOCK", centerWidth, m.centerPanel())
-	right := panel("ACTIONS", rightWidth, m.rightPanel())
+	leftWidth, centerWidth, rightWidth := columnWidths(m.width)
+	panelHeight := m.height - 1
+	left := panel("TOURNAMENT", leftWidth, panelHeight, m.leftPanel(), lipgloss.Left)
+	center := panel("CLOCK", centerWidth, panelHeight, m.centerPanel(), lipgloss.Center)
+	right := panel("ACTIONS", rightWidth, panelHeight, m.rightPanel(), lipgloss.Left)
 	content := lipgloss.JoinHorizontal(lipgloss.Top, left, center, right)
 	footer := ""
 	if m.notice != "" {
@@ -158,17 +153,38 @@ func (m *Model) mainView() string {
 	return content + "\n" + lipgloss.NewStyle().Width(m.width).Padding(0, 1).Render(footer)
 }
 
-func panel(title string, totalWidth int, content string) string {
+func columnWidths(total int) (left, center, right int) {
+	right = total * 2 / 9
+	if right < 28 {
+		right = 28
+	}
+	remaining := total - right
+	left = remaining * 2 / 7
+	center = remaining - left
+	return left, center, right
+}
+
+func panel(title string, totalWidth, totalHeight int, content string, align lipgloss.Position) string {
 	contentWidth := totalWidth - 4
 	if contentWidth < 10 {
 		contentWidth = 10
 	}
+	contentHeight := totalHeight - 2
+	if contentHeight < 1 {
+		contentHeight = 1
+	}
 	body := titleStyle.Render(title) + "\n" + content
-	return panelStyle.Width(contentWidth).Render(body)
+	return panelStyle.Width(contentWidth).Height(contentHeight).Align(align).Render(body)
 }
 
 func (m *Model) leftPanel() string {
 	var lines []string
+	nameWidth, _, _ := columnWidths(m.width)
+	name := m.record.Name
+	if name == "" {
+		name = "New tournament"
+	}
+	lines = append(lines, titleStyle.Render(truncate(name, max(8, nameWidth-6))), "")
 	lines = append(lines,
 		fmt.Sprintf("Entrants       %d", m.summary.Entrants),
 		fmt.Sprintf("Active players %d", m.summary.ActivePlayers),
@@ -187,23 +203,37 @@ func (m *Model) leftPanel() string {
 		lines = append(lines, helpStyle.Render("No standings yet"))
 	} else {
 		for _, group := range m.prizes {
-			for _, player := range group.Players {
-				name := player.PlayerID
-				if p, ok := m.playerByID(player.PlayerID); ok {
-					name = p.Name
-				}
-				prize := config.EuroCents(player.AmountCents).String()
-				if player.GetsRemainder {
-					prize += " +€0.10"
-				}
-				lines = append(lines, fmt.Sprintf("%d. %-12s %s", group.FirstPlace, truncate(name, 12), prize))
-			}
+			lines = append(lines, fmt.Sprintf("%-16s %s", placeLabel(group.FirstPlace, group.LastPlace), config.EuroCents(group.TotalCents)))
 			if group.PendingRemainderCents > 0 {
 				lines = append(lines, warnStyle.Render(fmt.Sprintf("Pending tie remainder: %s", config.EuroCents(group.PendingRemainderCents))))
 			}
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+func placeLabel(first, last int) string {
+	ordinal := func(place int) string {
+		suffix := "th"
+		if place%100 < 11 || place%100 > 13 {
+			switch place % 10 {
+			case 1:
+				suffix = "st"
+			case 2:
+				suffix = "nd"
+			case 3:
+				suffix = "rd"
+			}
+		}
+		return fmt.Sprintf("%d%s", place, suffix)
+	}
+	if first == 1 && last == 1 {
+		return "Winner"
+	}
+	if first == last {
+		return ordinal(first) + " place"
+	}
+	return ordinal(first) + "–" + ordinal(last) + " places"
 }
 
 func (m *Model) prizeHeading() string {
@@ -236,10 +266,7 @@ func (m *Model) centerPanel() string {
 	if m.record.Checkpoint.HoldReason != "" {
 		timer = "HOLD"
 	}
-	if m.record.Status == store.StatusNotStarted {
-		timer = formatDuration(m.record.Checkpoint.Remaining)
-	}
-	lines = append(lines, lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("220")).Render("       "+timer))
+	lines = append(lines, largeTimer(timer), "")
 	lines = append(lines, statusLabel(m.record.Status), "")
 	lines = append(lines, fmt.Sprintf("Local time  %s", time.Now().Format("15:04:05")))
 	lines = append(lines, "Next level  "+m.nextLevelLabel())
@@ -401,6 +428,43 @@ func (m *Model) untilNextBreak(targetIndex int) string {
 	return formatDuration(remaining)
 }
 
+func largeTimer(value string) string {
+	glyphs := map[rune][5]string{
+		'0': {"█████", "█   █", "█   █", "█   █", "█████"},
+		'1': {"  ██ ", "   █ ", "   █ ", "   █ ", " ████"},
+		'2': {"█████", "    █", "█████", "█    ", "█████"},
+		'3': {"█████", "    █", " ████", "    █", "█████"},
+		'4': {"█   █", "█   █", "█████", "    █", "    █"},
+		'5': {"█████", "█    ", "█████", "    █", "█████"},
+		'6': {"█████", "█    ", "█████", "█   █", "█████"},
+		'7': {"█████", "    █", "   █ ", "  █  ", "  █  "},
+		'8': {"█████", "█   █", "█████", "█   █", "█████"},
+		'9': {"█████", "█   █", "█████", "    █", "█████"},
+		':': {"     ", "  ░  ", "     ", "  ░  ", "     "},
+	}
+	if value == "HOLD" {
+		return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("220")).Render("H O L D")
+	}
+	var rows [5]strings.Builder
+	for index, character := range value {
+		glyph, ok := glyphs[character]
+		if !ok {
+			continue
+		}
+		for row := range rows {
+			if index > 0 {
+				rows[row].WriteByte(' ')
+			}
+			rows[row].WriteString(glyph[row])
+		}
+	}
+	lines := make([]string, len(rows))
+	for index := range rows {
+		lines[index] = rows[index].String()
+	}
+	return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("220")).Render(strings.Join(lines, "\n"))
+}
+
 func formatAnte(ante config.AnteConfig) string {
 	switch ante.Kind {
 	case config.AnteBigBlind:
@@ -408,7 +472,7 @@ func formatAnte(ante config.AnteConfig) string {
 	case config.AntePerPlayer:
 		return fmt.Sprintf("Per-player ante %s", formatChips(ante.Amount))
 	default:
-		return "Ante  none"
+		return "Ante  0"
 	}
 }
 

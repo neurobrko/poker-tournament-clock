@@ -33,6 +33,20 @@ func TestParseX11SettingsWithoutDPMSKeepsScreenSaverState(t *testing.T) {
 	}
 }
 
+func TestParseX11SettingsAcceptsDPMSStateWithoutTimeouts(t *testing.T) {
+	output := `Screen Saver:
+  prefer blanking: no    allow exposures: yes
+  timeout: 0    cycle: 0
+DPMS is Disabled`
+	settings, err := parseX11Settings(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !settings.dpmsAvailable || settings.dpmsEnabled || settings.dpmsTimeoutsAvailable {
+		t.Fatalf("partial DPMS state = %+v", settings)
+	}
+}
+
 func TestParseX11SettingsRejectsIncompleteOutput(t *testing.T) {
 	if _, err := parseX11Settings("unrecognized output"); err == nil {
 		t.Fatal("parseX11Settings accepted invalid output")
