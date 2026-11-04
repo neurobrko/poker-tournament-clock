@@ -27,6 +27,44 @@ type PrizeGroup struct {
 	PendingRemainderCents int64
 }
 
+type PlacePrize struct {
+	Place       int
+	AmountCents int64
+}
+
+// CalculatePlacePrizes returns the current per-place payout schedule, independent of player standings.
+func CalculatePlacePrizes(poolCents int64, entrants int, tiers []config.PrizeTier) ([]PlacePrize, error) {
+	if poolCents < 0 || poolCents%10 != 0 {
+		return nil, fmt.Errorf("prize pool must be nonnegative and a multiple of €0.10")
+	}
+	if entrants < 0 {
+		return nil, fmt.Errorf("entrant count cannot be negative")
+	}
+	if entrants == 0 {
+		return nil, nil
+	}
+	if entrants == 1 {
+		return []PlacePrize{{Place: 1, AmountCents: poolCents}}, nil
+	}
+	tier, err := selectPrizeTier(entrants, tiers)
+	if err != nil {
+		return nil, err
+	}
+	places := len(tier.Percentages)
+	if places > entrants {
+		places = entrants
+	}
+	amounts, err := allocatePlaces(poolCents, tier.Percentages[:places])
+	if err != nil {
+		return nil, err
+	}
+	result := make([]PlacePrize, len(amounts))
+	for index, amount := range amounts {
+		result[index] = PlacePrize{Place: index + 1, AmountCents: amount}
+	}
+	return result, nil
+}
+
 // CalculatePrizes allocates a pool by entrant tier, rounds place prizes to €0.10,
 // renormalizes for short fields, and defers tied-split remainders until chosen.
 // extraChoices maps each tied group's first place to the player IDs receiving spare €0.10 units.

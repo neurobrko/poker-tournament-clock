@@ -184,10 +184,7 @@ func TestTournamentPanelShowsPlacesInsteadOfPlayerNames(t *testing.T) {
 	model.record.Name = "Friday game"
 	model.summary.PrizePoolCents = 1000
 	model.players = []tournament.Player{{ID: "p1", Name: "Alice"}, {ID: "p2", Name: "Bob"}}
-	model.prizes = []domain.PrizeGroup{
-		{FirstPlace: 1, LastPlace: 1, TotalCents: 600, Players: []domain.PlayerPrize{{PlayerID: "p1", AmountCents: 600}}},
-		{FirstPlace: 2, LastPlace: 2, TotalCents: 400, Players: []domain.PlayerPrize{{PlayerID: "p2", AmountCents: 400}}},
-	}
+	model.placePrizes = []domain.PlacePrize{{Place: 1, AmountCents: 600}, {Place: 2, AmountCents: 400}}
 	view := model.leftPanel()
 	if !strings.Contains(view, "Friday game") || !strings.Contains(view, "Winner") || !strings.Contains(view, "2nd place") {
 		t.Fatalf("tournament panel missing name or place labels:\n%s", view)

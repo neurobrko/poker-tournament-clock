@@ -45,13 +45,12 @@ type Model struct {
 	pendingName     string
 	pendingTemplate config.Template
 
-	database *store.Store
-	service  *tournament.Service
-	record   store.TournamentRecord
-	summary  tournament.Summary
-	players  []tournament.Player
-	standing tournament.Standing
-	prizes   []domain.PrizeGroup
+	database    *store.Store
+	service     *tournament.Service
+	record      store.TournamentRecord
+	summary     tournament.Summary
+	players     []tournament.Player
+	placePrizes []domain.PlacePrize
 
 	pendingEndExplanation  string
 	pendingEndChoices      map[int][]string
@@ -219,30 +218,10 @@ func (m *Model) refresh() {
 	} else {
 		m.setStatus(err, true)
 	}
-	if standing, err := m.service.CurrentStandings(context.Background()); err == nil {
-		m.standing = standing
+	if placePrizes, err := domain.CalculatePlacePrizes(int64(m.summary.PrizePoolCents), int(m.summary.Entrants), m.record.Config.PrizeTiers); err == nil {
+		m.placePrizes = placePrizes
 	} else {
-		m.standing = tournament.Standing{Entrants: m.summary.Entrants}
-		m.setStatus(err, true)
-	}
-	if m.record.Status == store.StatusEnded && (m.record.ResultCompleted == nil || !*m.record.ResultCompleted) {
-		m.standing.Groups = nil
-		m.prizes = nil
-		return
-	}
-	if m.record.Status == store.StatusEnded && m.record.ResultCompleted != nil && *m.record.ResultCompleted {
-		if result, err := m.service.LatestFinalResult(context.Background()); err == nil {
-			m.prizes = result.Prizes
-		} else {
-			m.prizes = nil
-			m.setStatus(err, true)
-		}
-		return
-	}
-	if result, err := m.service.CurrentPrizes(context.Background(), nil); err == nil {
-		m.prizes = result.Prizes
-	} else {
-		m.prizes = nil
+		m.placePrizes = nil
 		m.setStatus(err, true)
 	}
 }

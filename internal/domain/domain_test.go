@@ -65,6 +65,45 @@ func TestRequiredChipsRejectsOverflowAndInvalidSegment(t *testing.T) {
 	}
 }
 
+func TestCalculatePlacePrizesSelectsInclusiveTiersAndUsesCurrentPool(t *testing.T) {
+	tiers := []config.PrizeTier{
+		{MinPlayers: 2, Percentages: []config.Percentage{"70", "30"}},
+		{MinPlayers: 5, Percentages: []config.Percentage{"60", "25", "15"}},
+		{MinPlayers: 10, Percentages: []config.Percentage{"40", "30", "20", "10"}},
+	}
+	cases := []struct {
+		entrants int
+		want     []int64
+	}{
+		{2, []int64{7000, 3000}},
+		{4, []int64{7000, 3000}},
+		{5, []int64{6000, 2500, 1500}},
+		{10, []int64{4000, 3000, 2000, 1000}},
+	}
+	for _, test := range cases {
+		got, err := CalculatePlacePrizes(10000, test.entrants, tiers)
+		if err != nil {
+			t.Fatalf("entrants %d: %v", test.entrants, err)
+		}
+		if len(got) != len(test.want) {
+			t.Fatalf("entrants %d: prizes = %+v", test.entrants, got)
+		}
+		for index, amount := range test.want {
+			if got[index].Place != index+1 || got[index].AmountCents != amount {
+				t.Fatalf("entrants %d place %d = %+v, want %d cents", test.entrants, index+1, got[index], amount)
+			}
+		}
+	}
+	one, err := CalculatePlacePrizes(1230, 1, nil)
+	if err != nil || len(one) != 1 || one[0].AmountCents != 1230 {
+		t.Fatalf("one-entrant schedule = %+v, %v", one, err)
+	}
+	zero, err := CalculatePlacePrizes(0, 0, nil)
+	if err != nil || len(zero) != 0 {
+		t.Fatalf("zero-entrant schedule = %+v, %v", zero, err)
+	}
+}
+
 func TestCalculatePrizesUsesExactMoneyAndLargestRemainder(t *testing.T) {
 	groups := []FinishGroup{{PlayerIDs: []string{"first"}}, {PlayerIDs: []string{"second"}}, {PlayerIDs: []string{"third"}}}
 	got, err := CalculatePrizes(1000, 3, []config.PrizeTier{{MinPlayers: 2, Percentages: []config.Percentage{"60", "25", "15"}}}, groups, nil)

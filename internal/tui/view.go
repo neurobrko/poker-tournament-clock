@@ -197,16 +197,13 @@ func (m *Model) leftPanel() string {
 		fmt.Sprintf("Average stack %s", formatChips(m.summary.AverageStack)),
 		fmt.Sprintf("Prize pool    %s", m.summary.PrizePoolCents),
 		"",
-		m.prizeHeading(),
+		"Prizes",
 	)
-	if len(m.prizes) == 0 {
-		lines = append(lines, helpStyle.Render("No standings yet"))
+	if len(m.placePrizes) == 0 {
+		lines = append(lines, helpStyle.Render("No valid entrants"))
 	} else {
-		for _, group := range m.prizes {
-			lines = append(lines, fmt.Sprintf("%-16s %s", placeLabel(group.FirstPlace, group.LastPlace), config.EuroCents(group.TotalCents)))
-			if group.PendingRemainderCents > 0 {
-				lines = append(lines, warnStyle.Render(fmt.Sprintf("Pending tie remainder: %s", config.EuroCents(group.PendingRemainderCents))))
-			}
+		for _, prize := range m.placePrizes {
+			lines = append(lines, fmt.Sprintf("%-16s %s", placeLabel(prize.Place, prize.Place), config.EuroCents(prize.AmountCents)))
 		}
 	}
 	return strings.Join(lines, "\n")
@@ -234,16 +231,6 @@ func placeLabel(first, last int) string {
 		return ordinal(first) + " place"
 	}
 	return ordinal(first) + "–" + ordinal(last) + " places"
-}
-
-func (m *Model) prizeHeading() string {
-	if m.record.Status == store.StatusEnded {
-		if m.record.ResultCompleted != nil && *m.record.ResultCompleted {
-			return "Final prizes"
-		}
-		return "No final standings"
-	}
-	return "Provisional prizes"
 }
 
 func (m *Model) centerPanel() string {
