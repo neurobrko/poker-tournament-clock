@@ -490,6 +490,9 @@ func statusLabel(status store.TournamentStatus) string {
 }
 
 func renderStatus(message string, isError bool) string {
+	if strings.HasPrefix(message, "Warning:") {
+		return warnStyle.Render(message)
+	}
 	if isError {
 		return badStyle.Render("Error: " + message)
 	}

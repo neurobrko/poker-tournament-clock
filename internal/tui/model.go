@@ -258,9 +258,9 @@ func (m *Model) openTournament(database *store.Store) {
 	m.refresh()
 	m.inhibitor = sleepinhibit.New()
 	if err := m.inhibitor.Start(); err != nil {
-		m.setStatus(err, true)
+		m.setStatus("Warning: "+err.Error(), false)
 	} else {
-		m.setStatus(fmt.Errorf("sleep and display inactivity inhibited while tournament is open"), false)
+		m.setStatus("Sleep/display inactivity inhibition is active while tournament is open.", false)
 	}
 }
 
