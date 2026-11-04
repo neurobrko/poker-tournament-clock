@@ -100,8 +100,15 @@ func TestFileBrowserFiltersTemplatesAndNeverChoosesExistingSavePath(t *testing.T
 		names = append(names, entry.name)
 	}
 	joined := strings.Join(names, ",")
-	if !strings.Contains(joined, "a.yaml") || !strings.Contains(joined, "b.yml") || strings.Contains(joined, "ignore.txt") {
-		t.Fatalf("template browser entries = %v", names)
+	if !strings.Contains(joined, "a.yaml") || !strings.Contains(joined, "b.yml") || !strings.Contains(joined, "ignore.txt") {
+		t.Fatalf("template browser should display all folder contents = %v", names)
+	}
+	selectable := make(map[string]bool)
+	for _, entry := range browser.entries {
+		selectable[entry.name] = entry.selectable
+	}
+	if !selectable["a.yaml"] || !selectable["b.yml"] || selectable["ignore.txt"] {
+		t.Fatalf("template file selection state = %+v", selectable)
 	}
 	save, err := newFileBrowser(browseSaveTemplate, directory)
 	if err != nil {
@@ -116,6 +123,22 @@ func TestFileBrowserFiltersTemplatesAndNeverChoosesExistingSavePath(t *testing.T
 	}
 	if filepath.Ext(path) != ".yaml" {
 		t.Fatalf("template extension = %q", filepath.Ext(path))
+	}
+	load, err := newFileBrowser(browseTournamentDB, directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	visible := false
+	for _, entry := range load.entries {
+		if entry.name == "a.yaml" {
+			visible = true
+			if entry.selectable {
+				t.Fatal("YAML template is selectable as a tournament database")
+			}
+		}
+	}
+	if !visible {
+		t.Fatal("load browser hid the YAML file rather than displaying it as unsupported")
 	}
 }
 

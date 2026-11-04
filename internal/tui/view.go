@@ -79,7 +79,7 @@ func (m *Model) smallTerminalView() string {
 
 func (m *Model) browserView() string {
 	var builder strings.Builder
-	builder.WriteString(titleStyle.Render("FILE BROWSER"))
+	builder.WriteString(titleStyle.Render(browserTitle(m.browser.purpose)))
 	builder.WriteString("\n")
 	builder.WriteString(m.browser.directory)
 	builder.WriteString("\n\n")
@@ -100,16 +100,40 @@ func (m *Model) browserView() string {
 		name := entry.name
 		if entry.dir {
 			name = goodStyle.Render(name)
+		} else if !entry.selectable {
+			name = helpStyle.Render(name + " [not selectable]")
 		}
 		builder.WriteString(prefix + name + "\n")
 	}
 	builder.WriteString("\n")
-	builder.WriteString(helpStyle.Render("↑/↓ move · Enter open/select · Backspace parent · N new file · Esc cancel"))
+	if m.browser.purpose == browseSaveDatabase || m.browser.purpose == browseSaveTemplate {
+		builder.WriteString(helpStyle.Render("↑/↓ move · Enter open folder · Backspace parent · N new filename · existing files not overwritten · Esc cancel"))
+	} else {
+		builder.WriteString(helpStyle.Render("↑/↓ move · Enter open/select · Backspace parent · Esc cancel"))
+	}
+	builder.WriteString("\n" + helpStyle.Render("Grey files are visible but unsupported in this picker."))
 	if m.statusMessage != "" {
 		builder.WriteString("\n\n")
 		builder.WriteString(renderStatus(m.statusMessage, m.statusIsError))
 	}
 	return lipgloss.Place(m.width, m.height, lipgloss.Left, lipgloss.Top, builder.String(), lipgloss.WithWhitespaceChars(" "))
+}
+
+func browserTitle(purpose browserPurpose) string {
+	switch purpose {
+	case browseTournamentDB:
+		return "LOAD TOURNAMENT DATABASE (.db / .sqlite)"
+	case browseTemplate:
+		return "SELECT YAML TEMPLATE (.yaml / .yml)"
+	case browseSaveDatabase:
+		return "NEW TOURNAMENT DATABASE"
+	case browseSaveTemplate:
+		return "EXPORT TEMPLATE"
+	case browseSound:
+		return "SELECT SOUND FILE (.wav / .mp3)"
+	default:
+		return "FILE BROWSER"
+	}
 }
 
 func (m *Model) mainView() string {

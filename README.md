@@ -21,7 +21,7 @@ go build -trimpath -o poker-clock ./cmd/poker-clock
 ./poker-clock
 ```
 
-Startup offers **New tournament**, **Load tournament**, and **Quit**. File selection uses the keyboard. New tournaments can use the embedded default or import YAML; the selected configuration and tournament name are stored in SQLite. Existing database or export paths are never overwritten.
+Startup offers **New tournament**, **Load tournament**, and **Quit**. File selection uses the keyboard. New tournaments can use the embedded default or import YAML; after choosing either, select a destination folder and press `N` to enter a new database filename. Existing files are shown but cannot be selected as save destinations. **Load tournament** shows existing SQLite databases; to use YAML, choose **New tournament → Browse YAML template**. Existing database or export paths are never overwritten.
 
 The application uses Bubble Tea's alternate terminal screen. It does not change the size or fullscreen state of a terminal that was already open. Optional desktop launchers request a fullscreen terminal where the desktop supports it; see [`packaging/launchers`](packaging/launchers).
 

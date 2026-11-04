@@ -19,9 +19,10 @@ const (
 )
 
 type browserEntry struct {
-	name string
-	path string
-	dir  bool
+	name       string
+	path       string
+	dir        bool
+	selectable bool
 }
 
 type fileBrowser struct {
@@ -58,17 +59,13 @@ func (b *fileBrowser) reload() error {
 	entries := []browserEntry{{name: "..", path: filepath.Dir(b.directory), dir: true}}
 	for _, item := range items {
 		name := item.Name()
-		if strings.HasPrefix(name, ".") {
-			continue
-		}
 		path := filepath.Join(b.directory, name)
 		if item.IsDir() {
-			entries = append(entries, browserEntry{name: name + string(os.PathSeparator), path: path, dir: true})
+			entries = append(entries, browserEntry{name: name + string(os.PathSeparator), path: path, dir: true, selectable: true})
 			continue
 		}
-		if b.matches(name) {
-			entries = append(entries, browserEntry{name: name, path: path})
-		}
+		selectable := b.matches(name) && b.purpose != browseSaveDatabase && b.purpose != browseSaveTemplate
+		entries = append(entries, browserEntry{name: name, path: path, selectable: selectable})
 	}
 	sort.SliceStable(entries[1:], func(i, j int) bool {
 		left, right := entries[i+1], entries[j+1]
@@ -129,7 +126,10 @@ func (b *fileBrowser) enter() (string, bool, error) {
 		return "", false, nil
 	}
 	if b.purpose == browseSaveDatabase || b.purpose == browseSaveTemplate {
-		return "", false, fmt.Errorf("choose a new filename; existing files are never overwritten")
+		return "", false, fmt.Errorf("choose a new filename with N; existing files are never overwritten")
+	}
+	if !entry.selectable {
+		return "", false, fmt.Errorf("%s is not a supported file for this action", entry.name)
 	}
 	return entry.path, true, nil
 }
