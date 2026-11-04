@@ -57,6 +57,7 @@ type desktop struct {
 	entry          *desktopEntry
 	keys           *desktopKeySink
 	browserScroll  *container.Scroll
+	modalScroll    *container.Scroll
 	startupButtons []*widget.Button
 	browserButtons []*widget.Button
 	lastScreen     screen
@@ -101,6 +102,7 @@ func (d *desktop) render(force bool) {
 	d.entry = nil
 	d.home = nil
 	d.browserScroll = nil
+	d.modalScroll = nil
 	d.startupButtons = nil
 	d.browserButtons = nil
 	var content fyne.CanvasObject
@@ -124,9 +126,12 @@ func (d *desktop) render(force bool) {
 		content = home
 	}
 
-	d.window.SetContent(container.NewBorder(d.keys, nil, nil, nil, content))
+	d.window.SetContent(container.NewBorder(d.keys, nil, nil, nil, container.New(windowSideInsetLayout{inset: 16}, content)))
 	if d.browserScroll != nil {
 		d.scrollBrowserSelection()
+	}
+	if d.modalScroll != nil && m.modal != nil {
+		d.scrollModalSelection(m.modal.cursor)
 	}
 	d.lastScreen, d.lastHasDB = m.screen, m.database != nil
 	if d.entry != nil {
@@ -168,6 +173,28 @@ func (d *desktop) disableBackgroundControls() {
 	}
 }
 
+type windowSideInsetLayout struct{ inset float32 }
+
+func (l windowSideInsetLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
+	if len(objects) == 0 {
+		return fyne.NewSize(0, 0)
+	}
+	minimum := objects[0].MinSize()
+	return fyne.NewSize(minimum.Width+2*l.inset, minimum.Height)
+}
+
+func (l windowSideInsetLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
+	if len(objects) == 0 {
+		return
+	}
+	width := size.Width - 2*l.inset
+	if width < 0 {
+		width = 0
+	}
+	objects[0].Move(fyne.NewPos(l.inset, 0))
+	objects[0].Resize(fyne.NewSize(width, size.Height))
+}
+
 func (d *desktop) scrollBrowserSelection() {
 	if d.browserScroll == nil || d.model.browser == nil {
 		return
@@ -184,6 +211,22 @@ func (d *desktop) scrollBrowserSelection() {
 	d.browserScroll.ScrollToOffset(fyne.NewPos(0, float32(firstVisible)*rowHeight))
 }
 
+func (d *desktop) scrollModalSelection(cursor int) {
+	if d.modalScroll == nil {
+		return
+	}
+	rowHeight := float32(48)
+	visibleRows := int(d.modalScroll.Size().Height / rowHeight)
+	if visibleRows < 1 {
+		visibleRows = 1
+	}
+	firstVisible := cursor - visibleRows + 1
+	if firstVisible < 0 {
+		firstVisible = 0
+	}
+	d.modalScroll.ScrollToOffset(fyne.NewPos(0, float32(firstVisible)*rowHeight))
+}
+
 func (d *desktop) dispatchKeyEvent(event *fyne.KeyEvent) {
 	if event == nil {
 		return
@@ -197,6 +240,10 @@ func (d *desktop) dispatchKeyEvent(event *fyne.KeyEvent) {
 		d.dispatchTeaKey(tea.Key{Type: tea.KeyUp})
 	case fyne.KeyDown:
 		d.dispatchTeaKey(tea.Key{Type: tea.KeyDown})
+	case fyne.KeyHome:
+		d.dispatchTeaKey(tea.Key{Type: tea.KeyHome})
+	case fyne.KeyEnd:
+		d.dispatchTeaKey(tea.Key{Type: tea.KeyEnd})
 	case fyne.KeyLeft:
 		d.dispatchTeaKey(tea.Key{Type: tea.KeyLeft})
 	case fyne.KeyRight:

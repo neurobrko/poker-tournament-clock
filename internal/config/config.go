@@ -5,12 +5,15 @@ import (
 	"bytes"
 	"embed"
 	"fmt"
+	"image/color"
 	"io"
 	"math/big"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
+	"golang.org/x/image/colornames"
 	"gopkg.in/yaml.v3"
 )
 
@@ -109,8 +112,14 @@ type Template struct {
 	Version      int                `yaml:"version"`
 	Purchases    PurchaseConfig     `yaml:"purchases"`
 	Registration RegistrationConfig `yaml:"registration"`
+	ChipValues   []ChipValue        `yaml:"chip_values,omitempty"`
 	Schedule     []Segment          `yaml:"schedule"`
 	PrizeTiers   []PrizeTier        `yaml:"prize_tiers"`
+}
+
+type ChipValue struct {
+	Value int64  `yaml:"value"`
+	Color string `yaml:"color"`
 }
 
 type PurchaseConfig struct {
@@ -237,6 +246,9 @@ func (t Template) Validate() error {
 	if t.Version != CurrentVersion {
 		return fmt.Errorf("unsupported template version %d (supported: %d)", t.Version, CurrentVersion)
 	}
+	if err := validateChipValues(t.ChipValues); err != nil {
+		return err
+	}
 	if err := validatePurchase("initial buy-in", t.Purchases.InitialBuyIn); err != nil {
 		return err
 	}
@@ -253,6 +265,64 @@ func (t Template) Validate() error {
 		return err
 	}
 	return t.validatePrizeTiers()
+}
+
+func validateChipValues(chips []ChipValue) error {
+	seen := make(map[int64]bool, len(chips))
+	for index, chip := range chips {
+		if chip.Value <= 0 {
+			return fmt.Errorf("chip_values item %d value must be positive", index+1)
+		}
+		if seen[chip.Value] {
+			return fmt.Errorf("chip_values value %d is duplicated", chip.Value)
+		}
+		seen[chip.Value] = true
+		if _, err := ParseChipColor(chip.Color); err != nil {
+			return fmt.Errorf("chip_values item %d color: %w", index+1, err)
+		}
+	}
+	return nil
+}
+
+// ParseChipColor accepts SVG/HTML color names and CSS-style hexadecimal colors.
+func ParseChipColor(value string) (color.NRGBA, error) {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if named, ok := colornames.Map[value]; ok {
+		return color.NRGBAModel.Convert(named).(color.NRGBA), nil
+	}
+	if value == "transparent" {
+		return color.NRGBA{}, nil
+	}
+	if !strings.HasPrefix(value, "#") {
+		return color.NRGBA{}, fmt.Errorf("%q is not an HTML color name or hex color", value)
+	}
+	digits := value[1:]
+	var channels []uint8
+	switch len(digits) {
+	case 3, 4:
+		for _, digit := range digits {
+			component, err := strconv.ParseUint(string(digit)+string(digit), 16, 8)
+			if err != nil {
+				return color.NRGBA{}, fmt.Errorf("invalid hex color %q", value)
+			}
+			channels = append(channels, uint8(component))
+		}
+	case 6, 8:
+		for index := 0; index < len(digits); index += 2 {
+			component, err := strconv.ParseUint(digits[index:index+2], 16, 8)
+			if err != nil {
+				return color.NRGBA{}, fmt.Errorf("invalid hex color %q", value)
+			}
+			channels = append(channels, uint8(component))
+		}
+	default:
+		return color.NRGBA{}, fmt.Errorf("invalid hex color %q", value)
+	}
+	result := color.NRGBA{R: channels[0], G: channels[1], B: channels[2], A: 0xff}
+	if len(channels) == 4 {
+		result.A = channels[3]
+	}
+	return result, nil
 }
 
 func validatePurchase(name string, purchase PurchaseType) error {

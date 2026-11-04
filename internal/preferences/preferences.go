@@ -10,8 +10,9 @@ import (
 )
 
 type Preferences struct {
-	SoundEnabled bool   `json:"sound_enabled"`
-	SoundFile    string `json:"sound_file,omitempty"`
+	SoundEnabled    bool   `json:"sound_enabled"`
+	SoundFile       string `json:"sound_file,omitempty"`
+	MinuteSoundFile string `json:"minute_sound_file,omitempty"`
 }
 
 func Default() Preferences { return Preferences{SoundEnabled: true} }
@@ -43,6 +44,9 @@ func Load() (Preferences, error) {
 	if strings.TrimSpace(prefs.SoundFile) != "" {
 		prefs.SoundFile = filepath.Clean(prefs.SoundFile)
 	}
+	if strings.TrimSpace(prefs.MinuteSoundFile) != "" {
+		prefs.MinuteSoundFile = filepath.Clean(prefs.MinuteSoundFile)
+	}
 	return prefs, nil
 }
 
@@ -51,8 +55,11 @@ func Save(prefs Preferences) error {
 	if err != nil {
 		return err
 	}
-	if prefs.SoundFile != "" {
-		ext := strings.ToLower(filepath.Ext(prefs.SoundFile))
+	for _, path := range []string{prefs.SoundFile, prefs.MinuteSoundFile} {
+		if path == "" {
+			continue
+		}
+		ext := strings.ToLower(filepath.Ext(path))
 		if ext != ".wav" && ext != ".mp3" {
 			return fmt.Errorf("sound file must be WAV or MP3")
 		}

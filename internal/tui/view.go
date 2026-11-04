@@ -129,8 +129,10 @@ func browserTitle(purpose browserPurpose) string {
 		return "NEW TOURNAMENT DATABASE"
 	case browseSaveTemplate:
 		return "EXPORT TEMPLATE"
-	case browseSound:
-		return "SELECT SOUND FILE (.wav / .mp3)"
+	case browseLevelSound:
+		return "SELECT END-OF-LEVEL SOUND (.wav / .mp3)"
+	case browseMinuteSound:
+		return "SELECT ONE-MINUTE WARNING SOUND (.wav / .mp3)"
 	default:
 		return "FILE BROWSER"
 	}
@@ -522,6 +524,25 @@ func truncate(value string, length int) string {
 	return string(runes[:length-1]) + "…"
 }
 
+func formatChipUpReminder(reminder string) string {
+	trimmed := strings.TrimSpace(reminder)
+	if !strings.HasPrefix(strings.ToLower(trimmed), "chip up") {
+		return trimmed
+	}
+	runes := []rune(trimmed)
+	for i := 0; i < len(runes); i++ {
+		if runes[i] < '0' || runes[i] > '9' {
+			continue
+		}
+		start := i
+		for i < len(runes) && runes[i] >= '0' && runes[i] <= '9' {
+			i++
+		}
+		return fmt.Sprintf("Chip up! (%s)", string(runes[start:i]))
+	}
+	return trimmed
+}
+
 func transitionNotice(transitions []domain.Transition, schedule []config.Segment) string {
 	var notices []string
 	for _, transition := range transitions {
@@ -534,6 +555,11 @@ func transitionNotice(transitions []domain.Transition, schedule []config.Segment
 			notices = append(notices, "Break ended")
 		case domain.TransitionHoldStarted:
 			notices = append(notices, "HOLD: "+transition.Reason)
+		}
+		if transition.ToIndex > 0 && transition.ToIndex <= len(schedule) {
+			if reminder := formatChipUpReminder(schedule[transition.ToIndex-1].Reminder); reminder != "" {
+				notices = append(notices, reminder)
+			}
 		}
 	}
 	return strings.Join(notices, " · ")

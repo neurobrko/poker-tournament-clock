@@ -1,17 +1,127 @@
 package tui
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"git.mpx.sk/elvis/poker_clock/internal/config"
 	"git.mpx.sk/elvis/poker_clock/internal/domain"
+	"git.mpx.sk/elvis/poker_clock/internal/store"
 	"git.mpx.sk/elvis/poker_clock/internal/tournament"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
+
+func TestTransitionNoticeIncludesBreakReminder(t *testing.T) {
+	schedule := []config.Segment{
+		{Kind: config.SegmentLevel},
+		{Kind: config.SegmentBreak, Reminder: "Chip up the 5-value chip."},
+	}
+	notice := transitionNotice([]domain.Transition{{Kind: domain.TransitionBreakStarted, ToIndex: 2}}, schedule)
+	if !strings.Contains(notice, "Chip up! (5)") {
+		t.Fatalf("break transition notice omitted reminder: %q", notice)
+	}
+}
+
+func TestMinuteWarningOnlyFiresBeforeLevelChanges(t *testing.T) {
+	schedule := []config.Segment{{Kind: config.SegmentLevel, SmallBlind: 5, BigBlind: 10}, {Kind: config.SegmentLevel, SmallBlind: 10, BigBlind: 20}, {Kind: config.SegmentBreak}}
+	summary := tournament.Summary{TotalStack: 100, ActivePlayers: 2}
+	checkpoint := store.Checkpoint{Running: true, SegmentIndex: 1, Remaining: 62 * time.Second}
+	if !shouldPlayMinuteWarning(checkpoint, time.Second, schedule, summary) {
+		t.Fatal("did not detect crossing the one-minute threshold before a level")
+	}
+	checkpoint.Remaining = time.Minute + time.Second
+	if shouldPlayMinuteWarning(checkpoint, time.Second, schedule, summary) {
+		t.Fatal("repeated warning after crossing the threshold")
+	}
+	checkpoint.Remaining = 62 * time.Second
+	checkpoint.SegmentIndex = 2
+	if shouldPlayMinuteWarning(checkpoint, time.Second, schedule, summary) {
+		t.Fatal("warned before a break instead of a level")
+	}
+	checkpoint.SegmentIndex = 3
+	if shouldPlayMinuteWarning(checkpoint, time.Second, schedule, summary) {
+		t.Fatal("warned before final schedule segment")
+	}
+	checkpoint.SegmentIndex = 1
+	checkpoint.HoldReason = "waiting for chips"
+	if shouldPlayMinuteWarning(checkpoint, time.Second, schedule, summary) {
+		t.Fatal("warned during held clock")
+	}
+}
+
+func TestLevelChangeChimeIsPrestartedForPlayerLatency(t *testing.T) {
+	schedule := []config.Segment{{Kind: config.SegmentLevel, SmallBlind: 5, BigBlind: 10}, {Kind: config.SegmentLevel, SmallBlind: 10, BigBlind: 20}}
+	summary := tournament.Summary{TotalStack: 100, ActivePlayers: 2}
+	checkpoint := store.Checkpoint{Running: true, SegmentIndex: 1, Remaining: 2 * time.Second}
+	if !shouldPlayLevelChangeSound(checkpoint, time.Second, schedule, summary) {
+		t.Fatal("did not pre-start level chime one second before transition")
+	}
+	checkpoint.Remaining = time.Second
+	if shouldPlayLevelChangeSound(checkpoint, time.Second, schedule, summary) {
+		t.Fatal("level chime should not start at the transition itself")
+	}
+}
+
+func TestAddOnClosedWarningAppearsBeforePlayerPicker(t *testing.T) {
+	template, err := config.DefaultTemplate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	model := NewModel()
+	model.record.Config = template
+	model.openPurchase(tournament.PurchaseAddOn)
+	if model.modal == nil || model.modal.kind != dialogMessage || !strings.Contains(model.modal.message, "Add-on window is closed") {
+		t.Fatalf("closed add-on window did not warn first: %+v", model.modal)
+	}
+}
+
+func TestLevelSelectorStartsOnCurrentLevelAndSupportsHomeEnd(t *testing.T) {
+	template, err := config.DefaultTemplate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	model := NewModel()
+	model.service = tournament.NewService(nil)
+	model.record.Config = template
+	model.record.Checkpoint.SegmentIndex = 5
+	model.openLevelSelect()
+	if model.modal == nil || model.modal.kind != dialogSelectSegment {
+		t.Fatalf("level selector did not open: %+v", model.modal)
+	}
+	if model.modal.cursor != 4 || !strings.Contains(model.modal.choices[4], "CURRENT") {
+		t.Fatalf("current level cursor/label = %d / %q", model.modal.cursor, model.modal.choices[4])
+	}
+	model.onKey(tea.KeyMsg(tea.Key{Type: tea.KeyHome}))
+	if model.modal.cursor != 0 {
+		t.Fatalf("Home cursor = %d, want 0", model.modal.cursor)
+	}
+	model.onKey(tea.KeyMsg(tea.Key{Type: tea.KeyEnd}))
+	if model.modal.cursor != len(model.modal.choices)-1 {
+		t.Fatalf("End cursor = %d, want %d", model.modal.cursor, len(model.modal.choices)-1)
+	}
+	model.record.Checkpoint.SegmentIndex = 4
+	model.openLevelSelect()
+	if model.modal.cursor != 3 || !strings.Contains(model.modal.choices[3], "CURRENT") || strings.Contains(model.modal.choices[2], "CURRENT") {
+		t.Fatalf("break selection current marker/cursor = %d / %q / %q", model.modal.cursor, model.modal.choices[3], model.modal.choices[2])
+	}
+}
+
+func TestSoundPickersStoreLevelAndMinuteWarningSeparately(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	model := NewModel()
+	model.browser = &fileBrowser{purpose: browseLevelSound}
+	model.browserSelected("level.wav")
+	model.browser = &fileBrowser{purpose: browseMinuteSound}
+	model.browserSelected("minute.mp3")
+	if model.prefs.SoundFile != "level.wav" || model.prefs.MinuteSoundFile != "minute.mp3" {
+		t.Fatalf("sound preferences conflated: level=%q minute=%q", model.prefs.SoundFile, model.prefs.MinuteSoundFile)
+	}
+}
 
 func TestStartupScreenOffersNewLoadQuit(t *testing.T) {
 	model := NewModel()
@@ -182,6 +292,26 @@ func TestFileBrowserFiltersTemplatesAndNeverChoosesExistingSavePath(t *testing.T
 	}
 	if !visible {
 		t.Fatal("load browser hid the YAML file rather than displaying it as unsupported")
+	}
+}
+
+func TestFileBrowserHomeAndEndKeysSelectBounds(t *testing.T) {
+	browser, err := newFileBrowser(browseTournamentDB, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 5; i++ {
+		browser.entries = append(browser.entries, browserEntry{name: fmt.Sprintf("%d.db", i), selectable: true})
+	}
+	model := NewModel()
+	model.browser = browser
+	model.onKey(tea.KeyMsg(tea.Key{Type: tea.KeyEnd}))
+	if browser.cursor != len(browser.entries)-1 {
+		t.Fatalf("End cursor = %d, want %d", browser.cursor, len(browser.entries)-1)
+	}
+	model.onKey(tea.KeyMsg(tea.Key{Type: tea.KeyHome}))
+	if browser.cursor != 0 {
+		t.Fatalf("Home cursor = %d, want 0", browser.cursor)
 	}
 }
 

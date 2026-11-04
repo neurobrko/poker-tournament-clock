@@ -14,19 +14,30 @@ import (
 //go:embed level-change.wav
 var bundledWAV []byte
 
+//go:embed level-change.mp3
+var bundledLevelMP3 []byte
+
+//go:embed minute-before-level.mp3
+var bundledMinuteMP3 []byte
+
 // Play starts sound playback asynchronously. It never waits for the audio backend.
 // An empty path selects the embedded WAV; an invalid or unsupported sound falls back to the terminal bell.
 func Play(path string, enabled bool) error {
-	return play(path, enabled, bell)
+	return play(path, enabled, bundledWAV, ".wav", bell)
 }
 
-// PlayDesktop plays a notification without writing a terminal bell. GUI callers surface
-// playback failures through their normal on-screen status instead.
+// PlayDesktop plays the configured sound or embedded MP3 level-change sound without
+// writing a terminal bell. GUI callers surface playback failures through their status line.
 func PlayDesktop(path string, enabled bool) error {
-	return play(path, enabled, nil)
+	return play(path, enabled, bundledLevelMP3, ".mp3", nil)
 }
 
-func play(path string, enabled bool, fallback func()) error {
+// PlayMinuteWarningDesktop plays the configured one-minute warning or bundled sound without a terminal bell.
+func PlayMinuteWarningDesktop(path string, enabled bool) error {
+	return play(path, enabled, bundledMinuteMP3, ".mp3", nil)
+}
+
+func play(path string, enabled bool, defaultAudio []byte, defaultExtension string, fallback func()) error {
 	if !enabled {
 		return nil
 	}
@@ -37,14 +48,14 @@ func play(path string, enabled bool, fallback func()) error {
 	}
 	cleanup := func() {}
 	if path == "" {
-		temporary, err := os.CreateTemp("", "poker-clock-*.wav")
+		temporary, err := os.CreateTemp("", "poker-clock-*"+defaultExtension)
 		if err != nil {
 			beep()
 			return fmt.Errorf("create bundled notification sound: %w", err)
 		}
 		name := temporary.Name()
 		cleanup = func() { _ = os.Remove(name) }
-		if _, err := temporary.Write(bundledWAV); err != nil {
+		if _, err := temporary.Write(defaultAudio); err != nil {
 			_ = temporary.Close()
 			cleanup()
 			beep()
@@ -106,29 +117,52 @@ func playerCommand(path string) (string, []string, error) {
 		candidates = append(candidates, struct {
 			name string
 			args []string
-		}{"ffplay", []string{"-nodisp", "-autoexit", "-loglevel", "quiet", "-nostdin", path}})
-		if strings.EqualFold(filepath.Ext(path), ".wav") {
-			quoted := strings.ReplaceAll(path, "'", "''")
+		}{"ffplay", []string{"-nodisp", "-autoexit", "-loglevel", "quiet", path}})
+		quoted := strings.ReplaceAll(path, "'", "''")
+		if extension == ".wav" {
 			candidates = append(candidates, struct {
 				name string
 				args []string
 			}{"powershell.exe", []string{"-NoProfile", "-NonInteractive", "-Command", "(New-Object System.Media.SoundPlayer -ArgumentList '" + quoted + "').PlaySync()"}})
+		} else {
+			player := "$p = New-Object -ComObject WMPlayer.OCX; $p.URL = '" + quoted + "'; $p.controls.play(); while ($p.playState -ne 1) { Start-Sleep -Milliseconds 100 }; $p.close()"
+			candidates = append(candidates, struct {
+				name string
+				args []string
+			}{"powershell.exe", []string{"-NoProfile", "-NonInteractive", "-Command", player}})
 		}
 	default:
-		candidates = append(candidates,
-			struct {
-				name string
-				args []string
-			}{"paplay", []string{path}},
-			struct {
-				name string
-				args []string
-			}{"aplay", []string{"-q", path}},
-			struct {
-				name string
-				args []string
-			}{"ffplay", []string{"-nodisp", "-autoexit", "-loglevel", "quiet", "-nostdin", path}},
-		)
+		if extension == ".mp3" {
+			candidates = append(candidates,
+				struct {
+					name string
+					args []string
+				}{"ffplay", []string{"-nodisp", "-autoexit", "-loglevel", "quiet", path}},
+				struct {
+					name string
+					args []string
+				}{"mpv", []string{"--no-video", "--really-quiet", path}},
+				struct {
+					name string
+					args []string
+				}{"mpg123", []string{"-q", path}},
+			)
+		} else {
+			candidates = append(candidates,
+				struct {
+					name string
+					args []string
+				}{"paplay", []string{path}},
+				struct {
+					name string
+					args []string
+				}{"aplay", []string{"-q", path}},
+				struct {
+					name string
+					args []string
+				}{"ffplay", []string{"-nodisp", "-autoexit", "-loglevel", "quiet", path}},
+			)
+		}
 	}
 	for _, candidate := range candidates {
 		if executable, err := exec.LookPath(candidate.name); err == nil {

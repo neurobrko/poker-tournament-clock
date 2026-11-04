@@ -131,12 +131,12 @@ func (d *desktop) choiceList(choices []string, cursor int, choose func(int)) fyn
 		}
 		rows = append(rows, button)
 	}
-	return listScroll(rows)
+	return d.listScroll(rows)
 }
 
-func listScroll(rows []fyne.CanvasObject) fyne.CanvasObject {
+func (d *desktop) listScroll(rows []fyne.CanvasObject) fyne.CanvasObject {
 	content := container.New(layout.NewCustomPaddedVBoxLayout(3), rows...)
-	scroll := container.NewVScroll(content)
+	d.modalScroll = container.NewVScroll(content)
 	visibleRows := len(rows)
 	if visibleRows > 7 {
 		visibleRows = 7
@@ -144,7 +144,7 @@ func listScroll(rows []fyne.CanvasObject) fyne.CanvasObject {
 	if visibleRows < 1 {
 		visibleRows = 1
 	}
-	return container.New(&minimumHeightLayout{height: float32(visibleRows * 48)}, scroll)
+	return container.New(&minimumHeightLayout{height: float32(visibleRows * 48)}, d.modalScroll)
 }
 
 func (d *desktop) segmentDialog(modal *dialog) fyne.CanvasObject {
@@ -187,7 +187,7 @@ func (d *desktop) multiPlayerDialog(modal *dialog) fyne.CanvasObject {
 		d.modalButton("Continue  ·  Enter", func() { d.dispatchTeaKey(tea.Key{Type: tea.KeyEnter}) }),
 		d.modalButton("Cancel  ·  Esc", func() { d.closeModal() }),
 	)
-	return container.NewVBox(listScroll(rows), container.NewHBox(buttons...))
+	return container.NewVBox(d.listScroll(rows), container.NewHBox(buttons...))
 }
 
 func (d *desktop) participantDialog(modal *dialog) fyne.CanvasObject {
@@ -269,11 +269,7 @@ func (d *desktop) browserView() fyne.CanvasObject {
 	entries := make([]fyne.CanvasObject, 0, len(browser.entries))
 	for index, entry := range browser.entries {
 		index, entry := index, entry
-		prefix := ""
-		if index == browser.cursor {
-			prefix = "›  "
-		}
-		label := prefix + entry.name
+		label := entry.name
 		if entry.dir {
 			label = "▸  " + label
 		}
@@ -297,21 +293,19 @@ func (d *desktop) browserView() fyne.CanvasObject {
 	hiddenButton := d.newButton(hiddenFilesButtonLabel(browser.showHidden), func() { d.toggleHiddenFiles() })
 	unsupportedButton := d.newButton(unsupportedFilesButtonLabel(browser.showUnsupported), func() { d.toggleUnsupportedFiles() })
 	d.browserButtons = append(d.browserButtons, hiddenButton, unsupportedButton, up)
-	filterButtons := []fyne.CanvasObject{hiddenButton, unsupportedButton}
+	footerButtons := []fyne.CanvasObject{hiddenButton, unsupportedButton}
 	if browser.purpose == browseSaveDatabase || browser.purpose == browseSaveTemplate {
 		newFile := d.newButton("N · New file", func() { d.activate('n') })
 		d.browserButtons = append(d.browserButtons, newFile)
-		filterButtons = append(filterButtons, newFile)
+		footerButtons = append(footerButtons, newFile)
 	}
 	cancel := d.newButton("Esc · Cancel", func() { d.dispatchTeaKey(tea.Key{Type: tea.KeyEsc}) })
 	d.browserButtons = append(d.browserButtons, cancel)
-	footerButtons := container.NewVBox(
-		container.NewGridWithColumns(len(filterButtons), filterButtons...),
-		container.NewHBox(layout.NewSpacer(), up, cancel),
-	)
+	footerButtons = append(footerButtons, up, cancel)
+	controls := container.NewHScroll(container.NewHBox(footerButtons...))
 	body := container.NewBorder(
 		container.NewVBox(title, path),
-		container.NewVBox(d.statusNotice(), footerButtons),
+		container.NewVBox(d.statusNotice(), controls),
 		nil, nil, list,
 	)
 	return container.NewPadded(body)

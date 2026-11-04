@@ -18,6 +18,7 @@ var Spacedust = struct {
 	Muted      color.NRGBA
 	Accent     color.NRGBA
 	Teal       color.NRGBA
+	Blue       color.NRGBA
 	Green      color.NRGBA
 	Yellow     color.NRGBA
 	Red        color.NRGBA
@@ -30,6 +31,7 @@ var Spacedust = struct {
 	Muted:      color.NRGBA{R: 0x9a, G: 0xb4, B: 0xb0, A: 0xff},
 	Accent:     color.NRGBA{R: 0xff, G: 0x8a, B: 0x39, A: 0xff},
 	Teal:       color.NRGBA{R: 0x06, G: 0xaf, B: 0xc7, A: 0xff},
+	Blue:       color.NRGBA{R: 0x67, G: 0xa0, B: 0xcd, A: 0xff},
 	Green:      color.NRGBA{R: 0x5c, G: 0xab, B: 0x96, A: 0xff},
 	Yellow:     color.NRGBA{R: 0xe3, G: 0xcd, B: 0x7b, A: 0xff},
 	Red:        color.NRGBA{R: 0xe3, G: 0x5a, B: 0x00, A: 0xff},

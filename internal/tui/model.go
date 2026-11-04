@@ -148,18 +148,66 @@ func (m *Model) processClockDelta(delta, wallDelta time.Duration, wall time.Time
 		m.refresh()
 		return
 	}
+	warnMinute := false
+	levelChime := false
+	warningSegment := 0
 	if m.record.Status == store.StatusRunning && delta > 0 {
+		before := m.record.Checkpoint
+		warningSegment = before.SegmentIndex
+		warnMinute = shouldPlayMinuteWarning(before, delta, m.record.Config.Schedule, m.summary)
+		levelChime = shouldPlayLevelChangeSound(before, delta, m.record.Config.Schedule, m.summary)
 		transitions, err := m.service.AdvanceClock(context.Background(), delta, wall)
 		if err != nil {
 			m.setStatus(err, true)
-		} else if len(transitions) > 0 {
-			m.notice = transitionNotice(transitions, m.record.Config.Schedule)
-			if soundErr := sound.PlayDesktop(m.prefs.SoundFile, m.prefs.SoundEnabled); soundErr != nil {
-				m.setStatus(soundErr, true)
+			warnMinute, levelChime = false, false
+		} else {
+			if levelChime {
+				m.playLevelChangeSound()
+			}
+			if len(transitions) > 0 {
+				m.notice = transitionNotice(transitions, m.record.Config.Schedule)
 			}
 		}
 	}
 	m.refresh()
+	if warnMinute && m.record.Status == store.StatusRunning && m.record.Checkpoint.SegmentIndex == warningSegment && m.record.Checkpoint.Remaining > 0 && m.record.Checkpoint.Remaining <= time.Minute+time.Second {
+		if soundErr := sound.PlayMinuteWarningDesktop(m.prefs.MinuteSoundFile, m.prefs.SoundEnabled); soundErr != nil {
+			m.setStatus(soundErr, true)
+		}
+	}
+}
+
+func upcomingLevelAvailable(checkpoint store.Checkpoint, schedule []config.Segment, summary tournament.Summary) bool {
+	index := checkpoint.SegmentIndex + 1
+	if checkpoint.PendingIndex > 0 {
+		index = checkpoint.PendingIndex
+	}
+	if index < 1 || index > len(schedule) || schedule[index-1].Kind != config.SegmentLevel {
+		return false
+	}
+	available, _, _, err := domain.LevelAvailability(schedule[index-1], summary.TotalStack, summary.ActivePlayers)
+	return err == nil && available
+}
+
+func (m *Model) playLevelChangeSound() {
+	if soundErr := sound.PlayDesktop(m.prefs.SoundFile, m.prefs.SoundEnabled); soundErr != nil {
+		m.setStatus(soundErr, true)
+	}
+}
+
+func shouldPlayMinuteWarning(checkpoint store.Checkpoint, delta time.Duration, schedule []config.Segment, summary tournament.Summary) bool {
+	if !checkpoint.Running || checkpoint.HoldReason != "" || checkpoint.SegmentFinished || !upcomingLevelAvailable(checkpoint, schedule, summary) {
+		return false
+	}
+	threshold := time.Minute + time.Second // allow MP3 startup latency so sound begins at 60 seconds
+	return checkpoint.Remaining > threshold && checkpoint.Remaining-delta <= threshold
+}
+
+func shouldPlayLevelChangeSound(checkpoint store.Checkpoint, delta time.Duration, schedule []config.Segment, summary tournament.Summary) bool {
+	if !checkpoint.Running || checkpoint.HoldReason != "" || checkpoint.SegmentFinished || !upcomingLevelAvailable(checkpoint, schedule, summary) {
+		return false
+	}
+	return checkpoint.Remaining > time.Second && checkpoint.Remaining-delta <= time.Second
 }
 
 func (m *Model) syncClock() {
@@ -438,6 +486,10 @@ func (m *Model) handleBrowserKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.browser.move(-1)
 	case tea.KeyDown:
 		m.browser.move(1)
+	case tea.KeyHome:
+		m.browser.cursor = 0
+	case tea.KeyEnd:
+		m.browser.cursor = len(m.browser.entries) - 1
 	case tea.KeyBackspace:
 		m.browser.directory = filepath.Dir(m.browser.directory)
 		if err := m.browser.reload(); err != nil {
@@ -499,12 +551,19 @@ func (m *Model) browserSelected(path string) {
 		}
 		m.pendingTemplate = template
 		m.startBrowser(browseSaveDatabase, screenStartup)
-	case browseSound:
+	case browseLevelSound:
 		m.prefs.SoundFile = path
 		if err := preferences.Save(m.prefs); err != nil {
 			m.setStatus(err, true)
 		} else {
-			m.setStatus(fmt.Errorf("custom sound saved"), false)
+			m.setStatus("Custom end-of-level sound saved.", false)
+		}
+	case browseMinuteSound:
+		m.prefs.MinuteSoundFile = path
+		if err := preferences.Save(m.prefs); err != nil {
+			m.setStatus(err, true)
+		} else {
+			m.setStatus("Custom one-minute warning sound saved.", false)
 		}
 	case browseSaveDatabase, browseSaveTemplate:
 		m.saveBrowserDestination(path, purpose)
@@ -600,6 +659,16 @@ func (m *Model) defaultFilename() string {
 }
 
 func (m *Model) openPurchase(kind tournament.PurchaseKind) {
+	if kind == tournament.PurchaseAddOn {
+		if !m.record.Config.Registration.AddOnsEnabled {
+			m.showMessage("Add-on unavailable", tournament.ErrAddOnsDisabled.Error())
+			return
+		}
+		if !m.addOnWindowOpen() {
+			m.showMessage("Add-on unavailable", tournament.ErrAddOnWindowClosed.Error())
+			return
+		}
+	}
 	players := make([]tournament.Player, 0)
 	for _, player := range m.players {
 		if player.Removed {
@@ -638,10 +707,20 @@ func (m *Model) openLevelSelect() {
 	}
 	choices := make([]string, len(m.record.Config.Schedule))
 	level, breakNo := 0, 0
+	currentSegmentIndex := m.record.Checkpoint.SegmentIndex - 1
+	if currentSegmentIndex >= len(m.record.Config.Schedule) {
+		currentSegmentIndex = len(m.record.Config.Schedule) - 1
+	}
+	if currentSegmentIndex < 0 {
+		currentSegmentIndex = -1
+	}
 	for index, segment := range m.record.Config.Schedule {
 		if segment.Kind == config.SegmentLevel {
 			level++
 			choices[index] = fmt.Sprintf("Level %d — %d/%d", level, segment.SmallBlind, segment.BigBlind)
+			if index == currentSegmentIndex {
+				choices[index] += " · CURRENT"
+			}
 		} else {
 			breakNo++
 			label := segment.Label
@@ -649,13 +728,24 @@ func (m *Model) openLevelSelect() {
 				label = fmt.Sprintf("Break %d", breakNo)
 			}
 			choices[index] = label
+			if index == currentSegmentIndex {
+				choices[index] += " · CURRENT"
+			}
 		}
 	}
-	m.modal = &dialog{kind: dialogSelectSegment, title: "Select level or break", choices: choices}
+	cursor := currentSegmentIndex
+	if cursor < 0 {
+		cursor = 0
+	}
+	m.modal = &dialog{kind: dialogSelectSegment, title: "Select level or break", choices: choices, cursor: cursor}
 }
 
 func (m *Model) openSettings() {
-	choices := []string{"Export reusable template", "Import/edit YAML template", "Rename tournament", "Choose sound file", "Clear custom sound"}
+	choices := []string{
+		"Export reusable template", "Import/edit YAML template", "Rename tournament",
+		"Choose end-of-level sound", "Choose one-minute warning sound",
+		"Use default end-of-level sound", "Use default one-minute warning sound",
+	}
 	if m.record.Status == store.StatusEnded {
 		choices = append(choices, "Reopen ended tournament")
 	}

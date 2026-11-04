@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"image/color"
 	"image/png"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/test"
+	"fyne.io/fyne/v2/widget"
 	"git.mpx.sk/elvis/poker_clock/internal/config"
 	"git.mpx.sk/elvis/poker_clock/internal/domain"
 	"git.mpx.sk/elvis/poker_clock/internal/store"
@@ -150,6 +152,11 @@ func TestDesktopMainViewHasDisabledFutureActionsAndLargeClock(t *testing.T) {
 	if got := d.home.timer.text.TextSize; got < 300 {
 		t.Fatalf("timer should scale up on fullscreen display; got font size %v", got)
 	}
+	renderer := d.home.nextBreak.CreateRenderer().(*coloredLineRenderer)
+	renderer.Layout(fyne.NewSize(700, 64))
+	if got := renderer.texts[0].TextSize; got < 20 {
+		t.Fatalf("next-break clock should remain readable; got font size %v", got)
+	}
 	if d.home.message.Text != "Transition to next level" {
 		t.Fatalf("bottom notice = %q", d.home.message.Text)
 	}
@@ -255,6 +262,39 @@ func TestPlayerHistoryShowsPurchaseAndBustActivity(t *testing.T) {
 	}
 }
 
+func TestConfiguredChipUpReminderAppearsDuringBreak(t *testing.T) {
+	app := test.NewApp()
+	defer app.Quit()
+	window := app.NewWindow("test")
+	model := NewModel()
+	template, err := config.DefaultTemplate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	database, err := store.Create(context.Background(), filepath.Join(t.TempDir(), "break-reminder.sqlite"), "Break reminder", template)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	model.screen = screenMain
+	model.database = database
+	model.service = tournament.NewService(database)
+	model.record, err = database.Tournament(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	model.record.Checkpoint.SegmentIndex = 8
+	model.summary, err = model.service.CurrentSummary(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := newTestDesktop(app, window, model)
+	d.render(true)
+	if got := d.home.breakReminder.Text; got != "Chip up! (5)" {
+		t.Fatalf("break reminder = %q", got)
+	}
+}
+
 func TestDesktopEnterActivatesHighlightedChoice(t *testing.T) {
 	app := test.NewApp()
 	defer app.Quit()
@@ -319,6 +359,9 @@ func TestPlayerAndSettingsMenusReflectCurrentActions(t *testing.T) {
 			t.Fatal("settings still duplicates the sound toggle")
 		}
 	}
+	if model.modal.choices[3] != "Choose end-of-level sound" || model.modal.choices[4] != "Choose one-minute warning sound" {
+		t.Fatalf("sound choices do not distinguish notification types: %v", model.modal.choices[3:5])
+	}
 	model.modal = &dialog{kind: dialogMenu, purpose: menuPlayers, choices: []string{"Add player", "Player info / history", "Rename player", "Remove player", "Void purchase"}}
 	for _, choice := range model.modal.choices {
 		if strings.Contains(strings.ToLower(choice), "sit out") || strings.Contains(strings.ToLower(choice), "return") {
@@ -334,6 +377,99 @@ func TestDesktopChoiceListReservesSpaceForMultipleRows(t *testing.T) {
 	list := d.choiceList([]string{"One", "Two", "Three", "Four"}, 0, func(int) {})
 	if got := list.MinSize().Height; got < 4*48 {
 		t.Fatalf("submenu list too short for all choices: %v", got)
+	}
+}
+
+func TestDesktopPlayerOverlayKeyboardNavigationScrollsAndSupportsHomeEnd(t *testing.T) {
+	app := test.NewApp()
+	defer app.Quit()
+	window := app.NewWindow("test")
+	window.Resize(fyne.NewSize(800, 600))
+	model := NewModel()
+	players := make([]tournament.Player, 20)
+	for i := range players {
+		players[i] = tournament.Player{ID: fmt.Sprintf("player-%02d", i), Name: fmt.Sprintf("Player %02d", i)}
+	}
+	model.modal = &dialog{kind: dialogSelectPlayer, title: "Choose player", players: players}
+	d := newTestDesktop(app, window, model)
+	d.render(true)
+
+	focused := window.Canvas().Focused()
+	if focused == nil {
+		t.Fatal("player overlay has no keyboard focus")
+	}
+	for i := 0; i < 10; i++ {
+		focused.TypedKey(&fyne.KeyEvent{Name: fyne.KeyDown})
+		focused = window.Canvas().Focused()
+	}
+	if model.modal.cursor != 10 {
+		t.Fatalf("Down cursor = %d, want 10", model.modal.cursor)
+	}
+	if d.modalScroll == nil || d.modalScroll.Offset.Y <= 0 {
+		t.Fatalf("selected player did not scroll into view: %+v", d.modalScroll)
+	}
+	focused.TypedKey(&fyne.KeyEvent{Name: fyne.KeyEnd})
+	if model.modal.cursor != len(players)-1 {
+		t.Fatalf("End cursor = %d, want %d", model.modal.cursor, len(players)-1)
+	}
+	focused = window.Canvas().Focused()
+	focused.TypedKey(&fyne.KeyEvent{Name: fyne.KeyHome})
+	if model.modal.cursor != 0 {
+		t.Fatalf("Home cursor = %d, want 0", model.modal.cursor)
+	}
+}
+
+func TestDesktopWindowContentHasSideInsets(t *testing.T) {
+	content := widget.NewLabel("content")
+	(windowSideInsetLayout{inset: 16}).Layout([]fyne.CanvasObject{content}, fyne.NewSize(500, 300))
+	if content.Position().X != 16 || content.Size().Width != 468 {
+		t.Fatalf("window content geometry = position %v size %v, want 16px side insets", content.Position(), content.Size())
+	}
+}
+
+func TestDesktopChipLegendUsesConfiguredValuesAndColors(t *testing.T) {
+	template, err := config.DefaultTemplate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	legend, ok := chipLegend(template.ChipValues).(*fyne.Container)
+	if !ok || len(legend.Objects) != 5 {
+		t.Fatalf("default chip legend = %#v", legend)
+	}
+	first, ok := legend.Objects[0].(*chipToken)
+	if !ok || first.value != "5" || first.fill != (color.NRGBA{R: 0xff, A: 0xff}) {
+		t.Fatalf("first chip token = %#v", legend.Objects[0])
+	}
+}
+
+func TestDesktopStatusAndNextBreakTypography(t *testing.T) {
+	template, err := config.DefaultTemplate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	model := NewModel()
+	model.record.Config = template
+	model.record.Checkpoint.SegmentIndex = 1
+	model.record.Status = store.StatusRunning
+	if got := desktopStatus(model, &template.Schedule[0]); got != "LEVEL 1 RUNNING" {
+		t.Fatalf("level status = %q, want uppercase level and state", got)
+	}
+	if got := desktopNextBreak(model, 12000); !strings.HasPrefix(got, "Next Break ") || strings.HasPrefix(got, "NEXT BREAK") || strings.Contains(got, "Next Break  ") {
+		t.Fatalf("next-break label typography = %q", got)
+	}
+	white := color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0xff}
+	parts := desktopNextBreakParts(model, 12000)
+	if len(parts) != 5 || parts[0].color != Spacedust.Blue || parts[1].color != white || parts[3].color != Spacedust.Blue || parts[4].color != white {
+		t.Fatalf("next-break property/value colors = %+v", parts)
+	}
+	blindsParts := desktopNextBlindsParts(model)
+	if len(blindsParts) != 2 || blindsParts[0].color != Spacedust.Blue || blindsParts[1].color != white {
+		t.Fatalf("next-blinds property/value colors = %+v", blindsParts)
+	}
+	model.record.Config.Schedule = []config.Segment{{Kind: config.SegmentLevel}}
+	model.record.Checkpoint.SegmentIndex = 0
+	if got := desktopNextBreak(model, 12000); got != "" {
+		t.Fatalf("next-break line without a configured break = %q", got)
 	}
 }
 

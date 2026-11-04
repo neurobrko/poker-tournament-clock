@@ -347,17 +347,27 @@ func (m *Model) chooseSettings(index int) {
 		}
 		m.modal = &dialog{kind: dialogText, title: "Rename tournament", prompt: "Tournament name", input: m.record.Name, textPurpose: textTournamentNameRename}
 	case 3:
-		m.startBrowser(browseSound, screenMain)
+		m.startBrowser(browseLevelSound, screenMain)
 	case 4:
+		m.startBrowser(browseMinuteSound, screenMain)
+	case 5:
 		m.prefs.SoundFile = ""
 		if err := preferences.Save(m.prefs); err != nil {
 			m.showMessage("Sound preference failed", err.Error())
 			return
 		}
 		m.modal = nil
-		m.setStatus("Using embedded notification sound.", false)
+		m.setStatus("Using default end-of-level sound.", false)
+	case 6:
+		m.prefs.MinuteSoundFile = ""
+		if err := preferences.Save(m.prefs); err != nil {
+			m.showMessage("Sound preference failed", err.Error())
+			return
+		}
+		m.modal = nil
+		m.setStatus("Using default one-minute warning sound.", false)
 	default:
-		if m.record.Status == store.StatusEnded {
+		if index == 7 && m.record.Status == store.StatusEnded {
 			m.modal = &dialog{kind: dialogText, title: "Reopen tournament", prompt: "Explanation (required, max 200 chars)", textPurpose: textReopenExplanation}
 		}
 	}
@@ -479,6 +489,14 @@ func (m *Model) handlePlayerDialog(key tea.KeyMsg, d *dialog) (tea.Model, tea.Cm
 		if len(d.players) > 0 {
 			d.cursor = (d.cursor + 1) % len(d.players)
 		}
+	case tea.KeyHome:
+		if len(d.players) > 0 {
+			d.cursor = 0
+		}
+	case tea.KeyEnd:
+		if len(d.players) > 0 {
+			d.cursor = len(d.players) - 1
+		}
 	case tea.KeyEnter:
 		if d.cursor >= 0 && d.cursor < len(d.players) {
 			m.choosePlayer(d, d.players[d.cursor])
@@ -535,6 +553,14 @@ func (m *Model) handleMultiPlayerDialog(key tea.KeyMsg, d *dialog) (tea.Model, t
 	case tea.KeyDown:
 		if len(d.players) > 0 {
 			d.cursor = (d.cursor + 1) % len(d.players)
+		}
+	case tea.KeyHome:
+		if len(d.players) > 0 {
+			d.cursor = 0
+		}
+	case tea.KeyEnd:
+		if len(d.players) > 0 {
+			d.cursor = len(d.players) - 1
 		}
 	case tea.KeySpace:
 		if d.cursor >= 0 && d.cursor < len(d.players) {
@@ -634,6 +660,14 @@ func (m *Model) handleSegmentDialog(key tea.KeyMsg, d *dialog) (tea.Model, tea.C
 	case tea.KeyDown:
 		if len(d.choices) > 0 {
 			d.cursor = (d.cursor + 1) % len(d.choices)
+		}
+	case tea.KeyHome:
+		if len(d.choices) > 0 {
+			d.cursor = 0
+		}
+	case tea.KeyEnd:
+		if len(d.choices) > 0 {
+			d.cursor = len(d.choices) - 1
 		}
 	case tea.KeyEnter:
 		m.selectSegment(d.cursor+1, nil)

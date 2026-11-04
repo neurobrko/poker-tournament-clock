@@ -15,7 +15,8 @@ const (
 	browseTemplate
 	browseSaveDatabase
 	browseSaveTemplate
-	browseSound
+	browseLevelSound
+	browseMinuteSound
 )
 
 type browserEntry struct {
@@ -26,9 +27,9 @@ type browserEntry struct {
 }
 
 type fileBrowser struct {
-	purpose    browserPurpose
-	directory  string
-	entries    []browserEntry
+	purpose         browserPurpose
+	directory       string
+	entries         []browserEntry
 	cursor          int
 	showHidden      bool
 	showUnsupported bool
@@ -109,7 +110,7 @@ func (b *fileBrowser) matches(name string) bool {
 		return ext == ".yaml" || ext == ".yml"
 	case browseTournamentDB:
 		return ext == ".sqlite" || ext == ".sqlite3" || ext == ".db"
-	case browseSound:
+	case browseLevelSound, browseMinuteSound:
 		return ext == ".wav" || ext == ".mp3"
 	default:
 		return false

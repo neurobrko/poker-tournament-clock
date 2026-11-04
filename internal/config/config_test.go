@@ -21,6 +21,12 @@ func TestDefaultTemplate(t *testing.T) {
 	if got, want := template.Purchases.AddOn, (PurchaseType{Price: 200, Chips: 5000}); got != want {
 		t.Fatalf("add-on = %+v, want %+v", got, want)
 	}
+	if got, want := len(template.ChipValues), 5; got != want {
+		t.Fatalf("chip values = %d entries, want %d", got, want)
+	}
+	if want := []ChipValue{{Value: 5, Color: "red"}, {Value: 25, Color: "green"}, {Value: 100, Color: "blue"}, {Value: 500, Color: "white"}, {Value: 1000, Color: "pink"}}; !reflect.DeepEqual(template.ChipValues, want) {
+		t.Fatalf("default chip values = %+v, want %+v", template.ChipValues, want)
+	}
 	if got, want := len(template.Schedule), 15; got != want {
 		t.Fatalf("schedule length = %d, want %d", got, want)
 	}
@@ -43,12 +49,19 @@ func TestDefaultTemplate(t *testing.T) {
 		t.Fatalf("got %d levels and %d breaks, want 12 and 3", len(levels), breaks)
 	}
 	wantBlinds := [][2]int64{{5, 10}, {10, 20}, {25, 50}, {50, 100}, {100, 200}, {250, 500}, {500, 1000}, {1000, 2000}, {2500, 5000}, {5000, 10000}, {10000, 20000}, {25000, 50000}}
+	wantAntes := []AnteConfig{
+		{Kind: AnteNone}, {Kind: AnteNone}, {Kind: AnteNone}, {Kind: AnteNone},
+		{Kind: AnteNone}, {Kind: AnteNone}, {Kind: AnteNone},
+		{Kind: AntePerPlayer, Amount: 25}, {Kind: AntePerPlayer, Amount: 50},
+		{Kind: AntePerPlayer, Amount: 100}, {Kind: AntePerPlayer, Amount: 500},
+		{Kind: AntePerPlayer, Amount: 1000},
+	}
 	for i, want := range wantBlinds {
 		if got := [2]int64{levels[i].SmallBlind, levels[i].BigBlind}; got != want {
 			t.Errorf("level %d blinds = %v, want %v", i+1, got, want)
 		}
-		if levels[i].Ante.Kind != AnteNone {
-			t.Errorf("level %d ante kind = %q, want none", i+1, levels[i].Ante.Kind)
+		if levels[i].Ante != wantAntes[i] {
+			t.Errorf("level %d ante = %+v, want %+v", i+1, levels[i].Ante, wantAntes[i])
 		}
 	}
 	if template.Registration.RegistrationDeadline != (Deadline{At: DeadlineAtBreakEnd, Target: 1}) {
@@ -64,6 +77,31 @@ func TestDefaultTemplate(t *testing.T) {
 	}
 	if err := template.Validate(); err != nil {
 		t.Fatalf("default payout tiers are invalid: %v", err)
+	}
+}
+
+func TestChipValuesAreOptionalAndColorsAcceptHTMLNamesAndHex(t *testing.T) {
+	template, err := DefaultTemplate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	template.ChipValues = nil
+	if err := template.Validate(); err != nil {
+		t.Fatalf("template without chip legend is invalid: %v", err)
+	}
+	for _, value := range []string{"white", "black", "red", "purple", "#abc", "#123456", "#1234", "#12345678"} {
+		if _, err := ParseChipColor(value); err != nil {
+			t.Errorf("ParseChipColor(%q): %v", value, err)
+		}
+	}
+	for _, value := range []string{"", "ultraviolet", "#12", "#xyz"} {
+		if _, err := ParseChipColor(value); err == nil {
+			t.Errorf("ParseChipColor(%q) unexpectedly succeeded", value)
+		}
+	}
+	template.ChipValues = []ChipValue{{Value: 5, Color: "red"}, {Value: 5, Color: "blue"}}
+	if err := template.Validate(); err == nil {
+		t.Fatal("duplicate chip values were accepted")
 	}
 }
 
