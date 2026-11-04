@@ -142,6 +142,23 @@ func TestFileBrowserFiltersTemplatesAndNeverChoosesExistingSavePath(t *testing.T
 	}
 }
 
+func TestSaveDatabaseBrowserNOpensFilenameDialog(t *testing.T) {
+	browser, err := newFileBrowser(browseSaveDatabase, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	model := NewModel()
+	model.browser = browser
+	model.pendingName = "Friday game"
+	model.onKey(tea.KeyMsg(tea.Key{Type: tea.KeyRunes, Runes: []rune{'n'}}))
+	if model.modal == nil || model.modal.kind != dialogText || model.modal.textPurpose != textBrowserFilename {
+		t.Fatalf("N did not open new filename prompt: %+v", model.modal)
+	}
+	if model.modal.input != "" || !strings.Contains(model.modal.prompt, "friday-game.sqlite") {
+		t.Fatalf("filename prompt should be empty with a visible default: %+v", model.modal)
+	}
+}
+
 func TestMainScreenIncludesRequiredKeyboardActions(t *testing.T) {
 	model := NewModel()
 	model.screen = screenMain

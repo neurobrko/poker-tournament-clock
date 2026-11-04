@@ -477,7 +477,7 @@ func (m *Model) handleBrowserKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case tea.KeyRunes:
 		if strings.EqualFold(key.String(), "n") && (m.browser.purpose == browseSaveDatabase || m.browser.purpose == browseSaveTemplate) {
-			m.modal = &dialog{kind: dialogText, title: "New file", prompt: "Filename", input: m.defaultFilename(), textPurpose: textBrowserFilename}
+			m.modal = &dialog{kind: dialogText, title: "New file", prompt: "Filename (Enter for " + m.defaultFilename() + ")", textPurpose: textBrowserFilename}
 		}
 	}
 	return m, nil

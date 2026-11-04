@@ -195,6 +195,9 @@ func (m *Model) submitText(d *dialog) {
 			m.closeDialog()
 			return
 		}
+		if value == "" {
+			value = m.defaultFilename()
+		}
 		path, err := m.browser.newPath(value)
 		if err != nil {
 			m.setStatus(err.Error(), true)
