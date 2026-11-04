@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#ffffff"/>
+  <g transform="translate(153 256)">
+    <g transform="rotate(-30)">
+      <g transform="scale(0.58)">
+        <g transform="translate(-256 -256)" fill="#0a1e24">
+          <path d="M256 52
+            C218 105 104 189 104 280
+            C104 348 151 397 211 397
+            C227 397 240 384 234 370
+            C240 409 230 435 210 454
+            L302 454
+            C282 435 272 409 278 370
+            C272 384 285 397 301 397
+            C361 397 408 348 408 280
+            C408 189 294 105 256 52 Z"/>
+        </g>
+      </g>
+    </g>
+  </g>
+  <g transform="translate(350 256)">
+    <g transform="rotate(30)">
+      <g transform="scale(0.58)">
+        <g transform="translate(-256 -256)" fill="#d92742">
+          <path d="M256 452
+            C221 421 72 306 72 203
+            C72 130 124 77 195 77
+            C222 77 244 90 256 112
+            C268 90 290 77 317 77
+            C388 77 440 130 440 203
+            C440 306 291 421 256 452 Z"/>
+        </g>
+      </g>
+    </g>
+  </g>
+</svg>

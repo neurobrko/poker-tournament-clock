@@ -58,6 +58,8 @@ type Summary struct {
 	TotalStack        int64
 	AverageStack      int64
 	PrizePoolCents    config.EuroCents
+	CurrentBusts      int64
+	TotalBusts        int64
 }
 
 type PurchaseConfigError struct {
@@ -441,6 +443,21 @@ func (s *Service) CurrentSummary(ctx context.Context) (Summary, error) {
 			return err
 		}
 		if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM players WHERE active = 1 AND removed = 0").Scan(&summary.ActivePlayers); err != nil {
+			return err
+		}
+		validBustees := `
+			SELECT bp.event_id, bp.player_id FROM bust_participants bp
+			JOIN busts b ON b.event_id = bp.event_id
+			WHERE bp.role = 'bustee' AND bp.voided_by_event_id IS NULL AND b.voided_by_event_id IS NULL
+			UNION ALL
+			SELECT pc.bust_event_id, pc.player_id FROM bust_participant_corrections pc
+			JOIN busts b ON b.event_id = pc.bust_event_id
+			WHERE pc.role = 'bustee' AND pc.player_id IS NOT NULL AND pc.voided_by_event_id IS NULL AND b.voided_by_event_id IS NULL`
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(DISTINCT candidates.player_id) FROM (`+validBustees+`) candidates
+			JOIN players p ON p.id = candidates.player_id WHERE p.active = 0 AND p.removed = 0`).Scan(&summary.CurrentBusts); err != nil {
+			return err
+		}
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM (`+validBustees+`)`).Scan(&summary.TotalBusts); err != nil {
 			return err
 		}
 		if summary.ActivePlayers > 0 {

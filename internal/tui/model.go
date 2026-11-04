@@ -154,7 +154,7 @@ func (m *Model) processClockDelta(delta, wallDelta time.Duration, wall time.Time
 			m.setStatus(err, true)
 		} else if len(transitions) > 0 {
 			m.notice = transitionNotice(transitions, m.record.Config.Schedule)
-			if soundErr := sound.Play(m.prefs.SoundFile, m.prefs.SoundEnabled); soundErr != nil {
+			if soundErr := sound.PlayDesktop(m.prefs.SoundFile, m.prefs.SoundEnabled); soundErr != nil {
 				m.setStatus(soundErr, true)
 			}
 		}
@@ -329,9 +329,9 @@ func (m *Model) handleSmallTerminalKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m *Model) handleStartupKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch key.Type {
-	case tea.KeyUp:
+	case tea.KeyUp, tea.KeyLeft:
 		m.startupCursor = (m.startupCursor + 2) % 3
-	case tea.KeyDown:
+	case tea.KeyDown, tea.KeyRight:
 		m.startupCursor = (m.startupCursor + 1) % 3
 	case tea.KeyEnter:
 		switch m.startupCursor {
@@ -380,7 +380,7 @@ func (m *Model) handleMainKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "a", "A":
 		m.openPurchase(tournament.PurchaseAddOn)
 	case "p", "P":
-		m.modal = &dialog{kind: dialogMenu, purpose: menuPlayers, title: "Players", choices: []string{"Add player", "Rename player", "Remove player", "Sit out / return", "Void purchase"}}
+		m.modal = &dialog{kind: dialogMenu, purpose: menuPlayers, title: "Players", choices: []string{"Add player", "Player info / history", "Rename player", "Remove player", "Void purchase"}}
 	case "x", "X":
 		m.modal = &dialog{kind: dialogMenu, purpose: menuBusts, title: "Bust management", choices: []string{"Record bust", "Void a bust event", "Correct a bust participant"}}
 	case "o", "O":
@@ -391,8 +391,6 @@ func (m *Model) handleMainKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.openSettings()
 	case "e", "E":
 		m.beginEnd()
-	case "h", "H":
-		m.showMessage("Hand resolver", "Hand resolver is reserved for Stage 2.")
 	case "?":
 		m.screen = screenRules
 		m.rulesOffset = 0
@@ -455,8 +453,19 @@ func (m *Model) handleBrowserKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.browserSelected(path)
 		}
 	case tea.KeyRunes:
-		if strings.EqualFold(key.String(), "n") && (m.browser.purpose == browseSaveDatabase || m.browser.purpose == browseSaveTemplate) {
-			m.modal = &dialog{kind: dialogText, title: "New file", prompt: "Filename (Enter for " + m.defaultFilename() + ")", textPurpose: textBrowserFilename}
+		switch strings.ToLower(key.String()) {
+		case "n":
+			if m.browser.purpose == browseSaveDatabase || m.browser.purpose == browseSaveTemplate {
+				m.modal = &dialog{kind: dialogText, title: "New file", prompt: "Filename (Enter for " + m.defaultFilename() + ")", textPurpose: textBrowserFilename}
+			}
+		case "h":
+			if err := m.browser.toggleHidden(); err != nil {
+				m.setStatus(err, true)
+			}
+		case "u":
+			if err := m.browser.toggleUnsupported(); err != nil {
+				m.setStatus(err, true)
+			}
 		}
 	}
 	return m, nil
@@ -646,7 +655,7 @@ func (m *Model) openLevelSelect() {
 }
 
 func (m *Model) openSettings() {
-	choices := []string{"Export reusable template", "Import/edit YAML template", "Rename tournament", "Choose sound file", "Clear custom sound", "Toggle sound"}
+	choices := []string{"Export reusable template", "Import/edit YAML template", "Rename tournament", "Choose sound file", "Clear custom sound"}
 	if m.record.Status == store.StatusEnded {
 		choices = append(choices, "Reopen ended tournament")
 	}
@@ -744,6 +753,9 @@ func (m *Model) finishQuitCommand() tea.Cmd {
 }
 
 func (m *Model) showMessage(title, message string) {
+	if messageIsError(title) {
+		message = formatUserError(message)
+	}
 	m.modal = &dialog{kind: dialogMessage, title: title, message: message}
 }
 
@@ -756,8 +768,14 @@ func (m *Model) setStatus(value any, isError bool) {
 	switch message := value.(type) {
 	case error:
 		m.statusMessage = message.Error()
+		if isError {
+			m.statusMessage = formatUserError(m.statusMessage)
+		}
 	case string:
 		m.statusMessage = message
+		if isError {
+			m.statusMessage = formatUserError(m.statusMessage)
+		}
 	default:
 		m.statusMessage = fmt.Sprint(message)
 	}

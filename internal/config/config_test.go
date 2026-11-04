@@ -67,6 +67,12 @@ func TestDefaultTemplate(t *testing.T) {
 	}
 }
 
+func TestEuroCentsStringUsesCurrencySuffix(t *testing.T) {
+	if got := EuroCents(200).String(); got != "2.00 €" {
+		t.Fatalf("EuroCents string = %q, want 2.00 €", got)
+	}
+}
+
 func TestPriceParsingUsesExactDecimalRepresentation(t *testing.T) {
 	for _, raw := range []string{"2", "2.0", "2.00"} {
 		t.Run(raw, func(t *testing.T) {

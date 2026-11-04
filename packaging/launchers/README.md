@@ -1,15 +1,5 @@
-# Optional desktop launchers
+# Legacy terminal launchers
 
-The binary itself never resizes or fullscreens an already-open terminal. These wrappers request fullscreen terminal windows when supported; desktop behavior is best-effort.
+These wrappers were for the former Bubble Tea terminal app. The Fyne GUI does not require or use them; launch `poker-clock` directly from the desktop or shell. The app opens fullscreen by default and uses **F11** to toggle fullscreen. Window sizing and fullscreen behavior are handled by Fyne.
 
-## Linux
-
-Install `poker-clock` and `poker-clock-launcher.sh` in a directory on `PATH`, then install `poker-clock.desktop` into `~/.local/share/applications/` or `/usr/share/applications/`. The launcher tries GNOME Terminal, Konsole, Xfce Terminal, then xterm. If none is available, run the binary from a terminal sized at least 120 × 36.
-
-## macOS
-
-Place executable `poker-clock` beside `poker-clock.command`, then launch the `.command` file in Finder. It asks Terminal to enter fullscreen. macOS may require Accessibility permission for fullscreen automation; if denied, Terminal still opens and can be made fullscreen manually.
-
-## Windows
-
-Run `poker-clock.exe` from a console. No GUI-terminal launcher is included; the executable remains a console application.
+The launcher files remain for reference during migration and may be removed once packaging has been updated for the desktop app.

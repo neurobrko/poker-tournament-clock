@@ -26,10 +26,12 @@ type browserEntry struct {
 }
 
 type fileBrowser struct {
-	purpose   browserPurpose
-	directory string
-	entries   []browserEntry
-	cursor    int
+	purpose    browserPurpose
+	directory  string
+	entries    []browserEntry
+	cursor          int
+	showHidden      bool
+	showUnsupported bool
 }
 
 func newFileBrowser(purpose browserPurpose, directory string) (*fileBrowser, error) {
@@ -59,12 +61,18 @@ func (b *fileBrowser) reload() error {
 	entries := []browserEntry{{name: "..", path: filepath.Dir(b.directory), dir: true}}
 	for _, item := range items {
 		name := item.Name()
+		if strings.HasPrefix(name, ".") && !b.showHidden {
+			continue
+		}
 		path := filepath.Join(b.directory, name)
 		if item.IsDir() {
 			entries = append(entries, browserEntry{name: name + string(os.PathSeparator), path: path, dir: true, selectable: true})
 			continue
 		}
 		selectable := b.matches(name) && b.purpose != browseSaveDatabase && b.purpose != browseSaveTemplate
+		if !selectable && !b.showUnsupported {
+			continue
+		}
 		entries = append(entries, browserEntry{name: name, path: path, selectable: selectable})
 	}
 	sort.SliceStable(entries[1:], func(i, j int) bool {
@@ -82,6 +90,16 @@ func (b *fileBrowser) reload() error {
 		b.cursor = 0
 	}
 	return nil
+}
+
+func (b *fileBrowser) toggleHidden() error {
+	b.showHidden = !b.showHidden
+	return b.reload()
+}
+
+func (b *fileBrowser) toggleUnsupported() error {
+	b.showUnsupported = !b.showUnsupported
+	return b.reload()
 }
 
 func (b *fileBrowser) matches(name string) bool {

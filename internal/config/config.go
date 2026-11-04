@@ -60,7 +60,7 @@ func (m EuroCents) MarshalYAML() (any, error) {
 }
 
 func (m EuroCents) String() string {
-	return fmt.Sprintf("€%d.%02d", int64(m)/100, int64(m)%100)
+	return fmt.Sprintf("%d.%02d €", int64(m)/100, int64(m)%100)
 }
 
 // Duration parses human-readable Go durations from YAML, such as 20m or 90s.

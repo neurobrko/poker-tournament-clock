@@ -41,6 +41,7 @@ const (
 	menuSettings
 	menuBusts
 	selectPurchase
+	selectInfo
 	selectRename
 	selectRemove
 	selectSitOut
@@ -84,6 +85,7 @@ const (
 	confirmVoidPurchase
 	confirmVoidBust
 	confirmCorrectBust
+	confirmSelectSegment
 )
 
 type dialog struct {
@@ -110,6 +112,7 @@ type dialog struct {
 	participant     bustParticipantOption
 	replacement     *tournament.BustParticipant
 	segmentIndex    int
+	remaining       *time.Duration
 	purchases       []tournament.Purchase
 	bustEvents      []int64
 	bustLabels      []string
@@ -316,11 +319,11 @@ func (m *Model) chooseMenu(d *dialog) {
 		case 0:
 			m.modal = &dialog{kind: dialogText, title: "Add player", prompt: "Player name", textPurpose: textAddPlayer}
 		case 1:
-			m.openPlayerSelect(selectRename, nonRemoved(m.players))
+			m.openPlayerSelect(selectInfo, m.players)
 		case 2:
-			m.openPlayerSelect(selectRemove, nonRemoved(m.players))
+			m.openPlayerSelect(selectRename, nonRemoved(m.players))
 		case 3:
-			m.openPlayerSelect(selectSitOut, activePlayers(m.players))
+			m.openPlayerSelect(selectRemove, nonRemoved(m.players))
 		case 4:
 			m.openVoidPurchase()
 		}
@@ -353,9 +356,6 @@ func (m *Model) chooseSettings(index int) {
 		}
 		m.modal = nil
 		m.setStatus("Using embedded notification sound.", false)
-	case 5:
-		m.modal = nil
-		m.toggleSound()
 	default:
 		if m.record.Status == store.StatusEnded {
 			m.modal = &dialog{kind: dialogText, title: "Reopen tournament", prompt: "Explanation (required, max 200 chars)", textPurpose: textReopenExplanation}
@@ -457,6 +457,9 @@ func (m *Model) confirmAction(d *dialog) tea.Cmd {
 		}
 		m.refresh()
 		m.setStatus("Bust participant corrected; original and correction retained.", false)
+	case confirmSelectSegment:
+		m.modal = nil
+		m.applySegmentSelection(d.segmentIndex, d.remaining)
 	}
 	if m.suspendedModal != nil && m.modal == nil {
 		m.modal, m.suspendedModal = m.suspendedModal, nil
@@ -486,6 +489,8 @@ func (m *Model) handlePlayerDialog(key tea.KeyMsg, d *dialog) (tea.Model, tea.Cm
 
 func (m *Model) choosePlayer(d *dialog, player tournament.Player) {
 	switch d.purpose {
+	case selectInfo:
+		m.showPlayerHistory(player)
 	case selectPurchase:
 		_, err := m.service.Buy(context.Background(), player.ID, d.purchaseKind, m.actionContext())
 		if err != nil {
@@ -641,6 +646,31 @@ func (m *Model) handleSegmentDialog(key tea.KeyMsg, d *dialog) (tea.Model, tea.C
 }
 
 func (m *Model) selectSegment(index int, remaining *time.Duration) {
+	label := "this level"
+	if index > 0 && index <= len(m.record.Config.Schedule) {
+		segment := m.record.Config.Schedule[index-1]
+		if segment.Kind == config.SegmentLevel {
+			level := 0
+			for _, candidate := range m.record.Config.Schedule[:index] {
+				if candidate.Kind == config.SegmentLevel {
+					level++
+				}
+			}
+			label = fmt.Sprintf("Level %d (%d / %d)", level, segment.SmallBlind, segment.BigBlind)
+		} else if segment.Label != "" {
+			label = segment.Label
+		} else {
+			label = "this break"
+		}
+	}
+	message := "Jump to " + label + "? This change will be recorded."
+	if remaining != nil {
+		message = fmt.Sprintf("Jump to %s with %s remaining? This change will be recorded.", label, formatDuration(*remaining))
+	}
+	m.modal = &dialog{kind: dialogConfirm, title: "Change tournament level?", message: message, confirm: confirmSelectSegment, segmentIndex: index, remaining: remaining}
+}
+
+func (m *Model) applySegmentSelection(index int, remaining *time.Duration) {
 	transitions, err := m.service.SelectSegment(context.Background(), index, remaining, m.actionContext())
 	if err != nil {
 		m.showMessage("Level selection failed", err.Error())
@@ -838,7 +868,7 @@ func (m *Model) openRemainderPicker() {
 				players = append(players, player)
 			}
 		}
-		m.modal = &dialog{kind: dialogSelectPlayer, purpose: selectRemainder, title: fmt.Sprintf("Choose player receiving extra €0.10 — place %d", group.FirstPlace), players: players}
+		m.modal = &dialog{kind: dialogSelectPlayer, purpose: selectRemainder, title: fmt.Sprintf("Choose player receiving extra 0.10 € — place %d", group.FirstPlace), players: players}
 		return
 	}
 	m.finalizeTournament(m.pendingEndExplanation, m.pendingEndChoices)

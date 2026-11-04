@@ -1,11 +1,12 @@
 # Poker Clock
 
-A keyboard-operated, self-hosted Texas Hold’em tournament clock. The application is a single Go binary with an embedded default tournament template, an embedded rules reference, and a pure-Go SQLite database. No server is required.
+A desktop GUI for running self-hosted Texas Hold’em tournaments. The application is a Go/Fyne desktop app with an embedded default tournament template, rules reference, Ubuntu fonts, and pure-Go SQLite database. No terminal or server is required at runtime.
 
 ## Requirements
 
 - Go 1.24 or newer to build. Go 1.24.4 was used for development.
-- A terminal at least **120 × 36** for the full interface.
+- Linux build: C compiler, `pkg-config`, OpenGL development libraries, and X11 development headers. On Debian/Ubuntu: `sudo apt install gcc pkg-config libgl1-mesa-dev xorg-dev`.
+- A supported desktop graphics environment. Linux is the initial target; macOS and Windows remain portability targets and need native toolchains for Fyne's desktop driver.
 - SQLite-compatible filesystem access for the tournament database.
 
 ## Run
@@ -21,9 +22,9 @@ go build -trimpath -o poker-clock ./cmd/poker-clock
 ./poker-clock
 ```
 
-Startup offers **New tournament**, **Load tournament**, and **Quit**. File selection uses the keyboard. New tournaments can use the embedded default or import YAML; after choosing either, select a destination folder and press `N` to enter a new database filename. Existing files are shown but cannot be selected as save destinations. **Load tournament** shows existing SQLite databases; to use YAML, choose **New tournament → Browse YAML template**. Existing database or export paths are never overwritten.
+The app opens fullscreen by default. Resize the window freely or use **F11** (also available as bottom-right button) to toggle fullscreen. Tournament state appears beneath the clock. The dark Spacedust-inspired palette and embedded Ubuntu Sans/Mono fonts work offline; clocks use Mono and footer notices use Condensed. Colors and typography live in `internal/tui/desktop_theme.go` and can be changed centrally. Startup offers **New tournament**, **Load tournament**, and **Quit**. Use on-screen controls or keyboard shortcuts. New tournaments can use the embedded default or import YAML; choose a destination folder and enter a new database filename. Existing files are visible but never overwritten. **Load tournament** lists SQLite databases; to use YAML, choose **New tournament → Browse YAML template**.
 
-The application uses Bubble Tea's alternate terminal screen. It does not change the size or fullscreen state of a terminal that was already open. Optional desktop launchers request a fullscreen terminal where the desktop supports it; see [`packaging/launchers`](packaging/launchers).
+A normal Linux desktop build links Fyne's OpenGL/X11 driver. Headless CI/tests use Fyne's software driver with `-tags ci`.
 
 ## Tournament template
 
@@ -37,17 +38,19 @@ Template schema and rules are documented in [`docs/configuration.md`](docs/confi
 | --- | --- |
 | `Space` | Start (with settings-lock confirmation), pause, or resume |
 | `B` / `R` / `A` | Buy-in / rebuy / add-on |
-| `P` | Add, rename, remove, or sit out/return a player; void a purchase with an explanation |
-| `L` | Select a configured level or break; optionally set remaining time |
-| `X` | Record a bust, void a bust event, or correct one participant |
+| `P` | Add, view player purchase/bust history, rename/remove a player, or void a purchase |
 | `O` | Sit out or return an active player |
-| `S` | Import/export settings, rename tournament, manage sound, reopen ended tournament |
-| `H` | Hand resolver placeholder; reserved for Stage 2 |
+| `L` | Select a configured level or break (confirmation required); optionally set remaining time |
+| `X` | Record a bust, void a bust event, or correct one participant |
+| `S` | Import/export settings, rename tournament, choose sound file, reopen ended tournament |
+| `N` | Toggle sound on/off |
+| `H` | Hand resolver (disabled; later stage) |
+| `T` | Player timeline (disabled; later stage) |
 | `?` | Texas Hold’em tournament rules reference |
 | `E` | End tournament; incomplete endings require an explanation |
 | `Q` | Confirm exit; running clock pauses and saves before exit |
 
-All modal input is keyboard-only. Text-entry dialogs treat Space as input, not as the global pause shortcut. At smaller terminal sizes the warning screen keeps Space and Q available; resizing restores any hidden dialog.
+Controls work with mouse and keyboard. Welcome screen: `N` new, `L` load, `Q` quit; Left/Right arrows and Tab move selection, Enter activates. File browser hides dotfiles and unsupported items by default; `H` toggles hidden files, `U` toggles unselectable files, `Bck` moves to parent, `N` creates new file, and `Esc` cancels. Player info shows purchase and bust history; running clocks stay visible and update beneath dialogs. Text-entry dialogs treat Space as input, not as the global pause shortcut. Use F11 or window controls to leave fullscreen and resize.
 
 ## Persistence and reporting
 
@@ -55,18 +58,18 @@ Each tournament is one SQLite file. An OS-backed `.lock` sidecar prevents simult
 
 Audit events preserve local timestamps with UTC offsets and, after start, elapsed tournament-clock and real time. Purchases, bust participants, corrections, voids, settings changes, and results are stored transactionally. The app does not track individual chip stacks or automatically subtract blinds/antes.
 
-## Sleep, display, and sound
+## Sleep and sound
 
 The app makes a best-effort attempt to inhibit system sleep and display blanking while a tournament is open, including when paused. It uses `systemd-inhibit` plus X11 `xset` where available on Linux, `caffeinate` on macOS, and Windows execution-state requests. Desktop environments may ignore or lack these mechanisms; the app reports unavailable inhibition. A wall/monotonic clock comparison pauses at the last saved checkpoint if sleep is detected.
 
-Transition sound is enabled by default and saved in the user's OS configuration directory, outside tournament settings. The binary embeds a short WAV. Playback uses available system players; a custom WAV/MP3 can be selected. If playback is unavailable, the app falls back to the terminal bell and keeps the visual notice.
+Transition sound is enabled by default and saved in the user's OS configuration directory, outside tournament settings. The binary embeds a short WAV. Playback uses available system players; a custom WAV/MP3 can be selected. If playback is unavailable, the GUI keeps the visual notice and does not emit a terminal bell.
 
 ## Build and test
 
 ```sh
-go test -race ./...
-go vet ./...
-./scripts/build-cross-platform.sh
+go test -race -tags ci ./...
+go vet -tags ci ./...
+./scripts/build-native.sh
 ```
 
-The cross-platform script builds Linux amd64/arm64, macOS amd64/arm64, and Windows amd64 binaries into `dist/`. TUI and sound behavior can still vary by terminal, audio backend, and desktop environment.
+Fyne's desktop driver uses CGO and native graphics libraries. Build on each target OS with its native toolchain; Linux cross-compilation to macOS or Windows is not configured yet. See `scripts/build-native.sh` for native build output. Sound availability depends on the system audio backend.

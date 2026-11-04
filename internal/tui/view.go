@@ -390,7 +390,7 @@ func (m *Model) nextBreakLabel() string {
 				label = fmt.Sprintf("Break %d", breakNo)
 			}
 			target = &segment
-			return fmt.Sprintf("%s in %s (clock time)", label, m.untilNextBreak(index))
+			return fmt.Sprintf("%s in %s", label, m.untilNextBreak(index))
 		}
 	}
 	if target == nil {

@@ -17,14 +17,29 @@ var bundledWAV []byte
 // Play starts sound playback asynchronously. It never waits for the audio backend.
 // An empty path selects the embedded WAV; an invalid or unsupported sound falls back to the terminal bell.
 func Play(path string, enabled bool) error {
+	return play(path, enabled, bell)
+}
+
+// PlayDesktop plays a notification without writing a terminal bell. GUI callers surface
+// playback failures through their normal on-screen status instead.
+func PlayDesktop(path string, enabled bool) error {
+	return play(path, enabled, nil)
+}
+
+func play(path string, enabled bool, fallback func()) error {
 	if !enabled {
 		return nil
+	}
+	beep := func() {
+		if fallback != nil {
+			fallback()
+		}
 	}
 	cleanup := func() {}
 	if path == "" {
 		temporary, err := os.CreateTemp("", "poker-clock-*.wav")
 		if err != nil {
-			bell()
+			beep()
 			return fmt.Errorf("create bundled notification sound: %w", err)
 		}
 		name := temporary.Name()
@@ -32,27 +47,27 @@ func Play(path string, enabled bool) error {
 		if _, err := temporary.Write(bundledWAV); err != nil {
 			_ = temporary.Close()
 			cleanup()
-			bell()
+			beep()
 			return fmt.Errorf("write bundled notification sound: %w", err)
 		}
 		if err := temporary.Close(); err != nil {
 			cleanup()
-			bell()
+			beep()
 			return fmt.Errorf("close bundled notification sound: %w", err)
 		}
 		path = name
 	} else if ext := strings.ToLower(filepath.Ext(path)); ext != ".wav" && ext != ".mp3" {
-		bell()
+		beep()
 		return fmt.Errorf("sound file must be WAV or MP3")
 	} else if _, err := os.Stat(path); err != nil {
-		bell()
+		beep()
 		return fmt.Errorf("open selected sound file: %w", err)
 	}
 
 	command, args, err := playerCommand(path)
 	if err != nil {
 		cleanup()
-		bell()
+		beep()
 		return err
 	}
 	cmd := exec.Command(command, args...)
@@ -60,12 +75,12 @@ func Play(path string, enabled bool) error {
 	cmd.Stderr = nil
 	if err := cmd.Start(); err != nil {
 		cleanup()
-		bell()
+		beep()
 		return fmt.Errorf("start sound playback: %w", err)
 	}
 	go func() {
 		if err := cmd.Wait(); err != nil {
-			bell()
+			beep()
 		}
 		cleanup()
 	}()

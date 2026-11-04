@@ -85,7 +85,7 @@ func TestSmallTerminalWarningPreservesDialogAndKeepsGlobalShortcuts(t *testing.T
 
 func TestFileBrowserFiltersTemplatesAndNeverChoosesExistingSavePath(t *testing.T) {
 	directory := t.TempDir()
-	for _, name := range []string{"a.yaml", "b.yml", "ignore.txt", "nested"} {
+	for _, name := range []string{"a.yaml", "b.yml", ".hidden.yaml", "ignore.txt", "nested"} {
 		path := filepath.Join(directory, name)
 		if name == "nested" {
 			if err := os.Mkdir(path, 0o700); err != nil {
@@ -104,8 +104,44 @@ func TestFileBrowserFiltersTemplatesAndNeverChoosesExistingSavePath(t *testing.T
 		names = append(names, entry.name)
 	}
 	joined := strings.Join(names, ",")
-	if !strings.Contains(joined, "a.yaml") || !strings.Contains(joined, "b.yml") || !strings.Contains(joined, "ignore.txt") {
-		t.Fatalf("template browser should display all folder contents = %v", names)
+	if !strings.Contains(joined, "a.yaml") || !strings.Contains(joined, "b.yml") || strings.Contains(joined, "ignore.txt") {
+		t.Fatalf("template browser should hide unselectable files by default = %v", names)
+	}
+	if strings.Contains(joined, ".hidden.yaml") {
+		t.Fatalf("template browser should hide dot files by default: %v", names)
+	}
+	if err := browser.toggleUnsupported(); err != nil {
+		t.Fatal(err)
+	}
+	foundUnsupported := false
+	for _, entry := range browser.entries {
+		if entry.name == "ignore.txt" {
+			foundUnsupported = true
+			if entry.selectable {
+				t.Fatal("unsupported file became selectable")
+			}
+		}
+	}
+	if !foundUnsupported {
+		t.Fatal("show-unselectable mode did not reveal unsupported files")
+	}
+	if err := browser.toggleHidden(); err != nil {
+		t.Fatal(err)
+	}
+	foundHidden := false
+	for _, entry := range browser.entries {
+		if entry.name == ".hidden.yaml" {
+			foundHidden = true
+		}
+	}
+	if !foundHidden {
+		t.Fatal("show-hidden mode did not reveal dot files")
+	}
+	if err := browser.toggleHidden(); err != nil {
+		t.Fatal(err)
+	}
+	if err := browser.toggleUnsupported(); err != nil {
+		t.Fatal(err)
 	}
 	selectable := make(map[string]bool)
 	for _, entry := range browser.entries {
@@ -130,6 +166,9 @@ func TestFileBrowserFiltersTemplatesAndNeverChoosesExistingSavePath(t *testing.T
 	}
 	load, err := newFileBrowser(browseTournamentDB, directory)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := load.toggleUnsupported(); err != nil {
 		t.Fatal(err)
 	}
 	visible := false

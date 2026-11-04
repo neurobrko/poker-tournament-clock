@@ -50,6 +50,13 @@ func TestRecordBustSupportsMultipleBustersAndTiedBustees(t *testing.T) {
 	if standing.Entrants != 4 || len(standing.Groups) != 2 || len(standing.Groups[0].PlayerIDs) != 2 || len(standing.Groups[1].PlayerIDs) != 2 {
 		t.Fatalf("provisional standings = %+v", standing)
 	}
+	summary, err := service.CurrentSummary(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.CurrentBusts != 2 || summary.TotalBusts != 2 {
+		t.Fatalf("bust counts = current %d / total %d, want 2 / 2", summary.CurrentBusts, summary.TotalBusts)
+	}
 }
 
 func TestBustRebuyReactivatesPlayerAndReordersProvisionalStandings(t *testing.T) {
@@ -78,6 +85,13 @@ func TestBustRebuyReactivatesPlayerAndReordersProvisionalStandings(t *testing.T)
 	}
 	if standing.Entrants != 3 || len(standing.Groups) != 2 || len(standing.Groups[0].PlayerIDs) != 2 || standing.Groups[1].PlayerIDs[0] != players[2].ID {
 		t.Fatalf("standings after rebuy and bust = %+v", standing)
+	}
+	summary, err := service.CurrentSummary(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.CurrentBusts != 1 || summary.TotalBusts != 2 {
+		t.Fatalf("bust counts after rebuy = current %d / total %d, want 1 / 2", summary.CurrentBusts, summary.TotalBusts)
 	}
 }
 
