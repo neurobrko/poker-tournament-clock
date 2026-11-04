@@ -25,14 +25,15 @@ type Inhibitor struct {
 }
 
 type x11Settings struct {
-	blanking    string
-	exposures   string
-	timeout     int
-	cycle       int
-	standby     int
-	suspend     int
-	off         int
-	dpmsEnabled bool
+	blanking      string
+	exposures     string
+	timeout       int
+	cycle         int
+	standby       int
+	suspend       int
+	off           int
+	dpmsEnabled   bool
+	dpmsAvailable bool
 }
 
 func New() *Inhibitor { return &Inhibitor{} }
@@ -57,7 +58,13 @@ func (i *Inhibitor) Start() error {
 	default:
 		displayScript, displayErr := x11DisplayScript()
 		if displayErr != nil {
-			warnings = append(warnings, "display-blanking inhibition unavailable: "+displayErr.Error())
+			warning := displayErr.Error()
+			if displayScript == "" {
+				warning = "display-blanking inhibition unavailable: " + warning
+			}
+			warnings = append(warnings, warning)
+		}
+		if displayScript == "" {
 			displayScript = "cat >/dev/null"
 		}
 		if path, err := exec.LookPath("systemd-inhibit"); err == nil {
@@ -134,14 +141,23 @@ func x11DisplayScript() (string, error) {
 	if settings.exposures == "yes" {
 		exposures = "expose"
 	}
-	dpms := "-dpms"
-	if settings.dpmsEnabled {
-		dpms = "+dpms"
+	disable := "xset s off"
+	restore := fmt.Sprintf("xset s %d %d; xset s %s; xset s %s",
+		settings.timeout, settings.cycle, blanking, exposures)
+	if settings.dpmsAvailable {
+		disable += " -dpms"
+		dpms := "-dpms"
+		if settings.dpmsEnabled {
+			dpms = "+dpms"
+		}
+		restore += fmt.Sprintf("; xset dpms %d %d %d; xset %s", settings.standby, settings.suspend, settings.off, dpms)
+	} else {
+		// Screen-saver blanking can still be inhibited; the server exposes no DPMS state to restore.
+		return disable + " || exit 1; trap '" + restore + "' EXIT; trap 'exit 0' HUP INT TERM; cat >/dev/null",
+			fmt.Errorf("X server does not report DPMS state; monitor power-off inhibition may be unavailable")
 	}
-	restore := fmt.Sprintf("xset s %d %d; xset s %s; xset s %s; xset dpms %d %d %d; xset %s",
-		settings.timeout, settings.cycle, blanking, exposures, settings.standby, settings.suspend, settings.off, dpms)
 	restore = strings.ReplaceAll(restore, "'", "'\\''")
-	return "xset s off -dpms || exit 1; trap '" + restore + "' EXIT; trap 'exit 0' HUP INT TERM; cat >/dev/null", nil
+	return disable + " || exit 1; trap '" + restore + "' EXIT; trap 'exit 0' HUP INT TERM; cat >/dev/null", nil
 }
 
 func parseX11Settings(output string) (x11Settings, error) {
@@ -160,8 +176,9 @@ func parseX11Settings(output string) (x11Settings, error) {
 	}
 	dpms := regexp.MustCompile(`(?s)Standby:\s*(\d+)\s+Suspend:\s*(\d+)\s+Off:\s*(\d+).*?DPMS is (Enabled|Disabled)`).FindStringSubmatch(output)
 	if len(dpms) != 5 {
-		return settings, fmt.Errorf("could not parse X11 DPMS settings")
+		return settings, nil
 	}
+	settings.dpmsAvailable = true
 	if settings.standby, err = strconv.Atoi(dpms[1]); err != nil {
 		return settings, err
 	}

@@ -20,6 +20,19 @@ DPMS (Energy Star):
 	}
 }
 
+func TestParseX11SettingsWithoutDPMSKeepsScreenSaverState(t *testing.T) {
+	output := `Screen Saver:
+  prefer blanking: yes    allow exposures: yes
+  timeout: 300    cycle: 600`
+	settings, err := parseX11Settings(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.dpmsAvailable || settings.timeout != 300 || settings.cycle != 600 {
+		t.Fatalf("partial X11 settings = %+v", settings)
+	}
+}
+
 func TestParseX11SettingsRejectsIncompleteOutput(t *testing.T) {
 	if _, err := parseX11Settings("unrecognized output"); err == nil {
 		t.Fatal("parseX11Settings accepted invalid output")
