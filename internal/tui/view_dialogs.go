@@ -181,6 +181,6 @@ func (m *Model) rulesView() string {
 		end = len(lines)
 	}
 	body := strings.Join(lines[m.rulesOffset:end], "\n")
-	footer := helpStyle.Render("↑/↓ scroll · PgUp/PgDn page · ? or Esc close · Space pause/resume")
+	footer := helpStyle.Render("Arrows scroll · PgUp/PgDn page · Home/End jump · ? or Esc close · Space pause/resume")
 	return titleStyle.Render("TEXAS HOLD’EM RULES") + "\n\n" + body + "\n\n" + footer
 }

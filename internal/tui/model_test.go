@@ -80,6 +80,26 @@ func TestAddOnClosedWarningAppearsBeforePlayerPicker(t *testing.T) {
 	}
 }
 
+func TestAddOnPickerOmitsPlayersWhoAlreadyBoughtOne(t *testing.T) {
+	template, err := config.DefaultTemplate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	model := NewModel()
+	model.record.Config = template
+	model.record.StartedAt = &started
+	model.record.Checkpoint.SegmentIndex = 4
+	model.players = []tournament.Player{
+		{ID: "used", Name: "Used", Active: true, HasInitialBuyIn: true, HasAddOn: true},
+		{ID: "eligible", Name: "Eligible", Active: true, HasInitialBuyIn: true},
+	}
+	model.openPurchase(tournament.PurchaseAddOn)
+	if model.modal == nil || model.modal.kind != dialogSelectPlayer || len(model.modal.players) != 1 || model.modal.players[0].ID != "eligible" {
+		t.Fatalf("add-on picker players = %+v", model.modal)
+	}
+}
+
 func TestLevelSelectorStartsOnCurrentLevelAndSupportsHomeEnd(t *testing.T) {
 	template, err := config.DefaultTemplate()
 	if err != nil {
@@ -120,6 +140,36 @@ func TestSoundPickersStoreLevelAndMinuteWarningSeparately(t *testing.T) {
 	model.browserSelected("minute.mp3")
 	if model.prefs.SoundFile != "level.wav" || model.prefs.MinuteSoundFile != "minute.mp3" {
 		t.Fatalf("sound preferences conflated: level=%q minute=%q", model.prefs.SoundFile, model.prefs.MinuteSoundFile)
+	}
+}
+
+func TestRulesSupportHomeEndAndPageKeys(t *testing.T) {
+	model := NewModel()
+	model.screen = screenRules
+	model.rulesText = "one\ntwo\nthree"
+	model.onKey(tea.KeyMsg(tea.Key{Type: tea.KeyEnd}))
+	if model.rulesOffset != 3 {
+		t.Fatalf("End offset = %d, want 3", model.rulesOffset)
+	}
+	model.onKey(tea.KeyMsg(tea.Key{Type: tea.KeyHome}))
+	if model.rulesOffset != 0 {
+		t.Fatalf("Home offset = %d, want 0", model.rulesOffset)
+	}
+	model.onKey(tea.KeyMsg(tea.Key{Type: tea.KeyPgDown}))
+	if model.rulesOffset != 10 {
+		t.Fatalf("PgDn offset = %d, want 10", model.rulesOffset)
+	}
+	model.onKey(tea.KeyMsg(tea.Key{Type: tea.KeyPgUp}))
+	if model.rulesOffset != 0 {
+		t.Fatalf("PgUp offset = %d, want 0", model.rulesOffset)
+	}
+	model.onKey(tea.KeyMsg(tea.Key{Type: tea.KeyRight}))
+	if model.rulesOffset != 1 {
+		t.Fatalf("Right offset = %d, want 1", model.rulesOffset)
+	}
+	model.onKey(tea.KeyMsg(tea.Key{Type: tea.KeyLeft}))
+	if model.rulesOffset != 0 {
+		t.Fatalf("Left offset = %d, want 0", model.rulesOffset)
 	}
 }
 

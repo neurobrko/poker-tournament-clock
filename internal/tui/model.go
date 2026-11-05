@@ -454,11 +454,11 @@ func (m *Model) handleRulesKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.toggleClock()
 	case tea.KeyEsc:
 		m.screen = screenMain
-	case tea.KeyUp:
+	case tea.KeyUp, tea.KeyLeft:
 		if m.rulesOffset > 0 {
 			m.rulesOffset--
 		}
-	case tea.KeyDown:
+	case tea.KeyDown, tea.KeyRight:
 		m.rulesOffset++
 	case tea.KeyPgUp:
 		m.rulesOffset -= 10
@@ -467,6 +467,10 @@ func (m *Model) handleRulesKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case tea.KeyPgDown:
 		m.rulesOffset += 10
+	case tea.KeyHome:
+		m.rulesOffset = 0
+	case tea.KeyEnd:
+		m.rulesOffset = len(strings.Split(m.rulesText, "\n"))
 	case tea.KeyRunes:
 		if key.String() == "?" {
 			m.screen = screenMain
@@ -684,7 +688,7 @@ func (m *Model) openPurchase(kind tournament.PurchaseKind) {
 				players = append(players, player)
 			}
 		case tournament.PurchaseAddOn:
-			if player.HasInitialBuyIn && player.Active {
+			if player.HasInitialBuyIn && player.Active && !player.HasAddOn {
 				players = append(players, player)
 			}
 		}

@@ -122,6 +122,12 @@ func TestDesktopMainViewHasDisabledFutureActionsAndLargeClock(t *testing.T) {
 	if d.home == nil || d.home.timer == nil {
 		t.Fatal("main dashboard was not constructed")
 	}
+	if d.home.blinds.text.TextSize <= 64 {
+		t.Fatalf("current blinds font size = %v, want larger than 64", d.home.blinds.text.TextSize)
+	}
+	if d.home.nextBreak.maxTextSize != 21 || d.home.nextLevel.maxTextSize != 21 {
+		t.Fatalf("next-line font caps = %v/%v, want same 21px as blinds heading", d.home.nextBreak.maxTextSize, d.home.nextLevel.maxTextSize)
+	}
 	if contentHeight, viewportHeight := d.home.leftScroll.Content.MinSize().Height, d.home.leftScroll.Size().Height; contentHeight > viewportHeight {
 		t.Fatalf("four-payout fullscreen column should fit without scrolling: content %v > viewport %v", contentHeight, viewportHeight)
 	}
@@ -155,7 +161,25 @@ func TestDesktopMainViewHasDisabledFutureActionsAndLargeClock(t *testing.T) {
 	renderer := d.home.nextBreak.CreateRenderer().(*coloredLineRenderer)
 	renderer.Layout(fyne.NewSize(700, 64))
 	if got := renderer.texts[0].TextSize; got < 20 {
-		t.Fatalf("next-break clock should remain readable; got font size %v", got)
+		t.Fatalf("next-break labels should remain readable; got font size %v", got)
+	}
+	if renderer.texts[1].TextSize != d.home.status.text.TextSize || !renderer.texts[1].TextStyle.Monospace || renderer.texts[4].TextSize != d.home.status.text.TextSize {
+		t.Fatalf("next-break value sizing/font = %v/%v, want status size %v and monospace timer", renderer.texts[1].TextSize, renderer.texts[4].TextSize, d.home.status.text.TextSize)
+	}
+	for _, pair := range [][2]int{{0, 1}, {3, 4}} {
+		left, right := renderer.texts[pair[0]], renderer.texts[pair[1]]
+		_, leftBaseline := app.Driver().RenderedTextSize(left.Text, left.TextSize, left.TextStyle, nil)
+		_, rightBaseline := app.Driver().RenderedTextSize(right.Text, right.TextSize, right.TextStyle, nil)
+		leftBaseline += left.Position().Y
+		rightBaseline += right.Position().Y
+		if leftBaseline-rightBaseline > 0.1 || rightBaseline-leftBaseline > 0.1 {
+			t.Fatalf("property/value baselines differ: %v vs %v", leftBaseline, rightBaseline)
+		}
+	}
+	firstGap := renderer.texts[1].Position().X - (renderer.texts[0].Position().X + renderer.texts[0].Size().Width)
+	secondGap := renderer.texts[4].Position().X - (renderer.texts[3].Position().X + renderer.texts[3].Size().Width)
+	if firstGap-secondGap > 0.1 || secondGap-firstGap > 0.1 {
+		t.Fatalf("property/value gaps differ: %v vs %v", firstGap, secondGap)
 	}
 	if d.home.message.Text != "Transition to next level" {
 		t.Fatalf("bottom notice = %q", d.home.message.Text)
@@ -419,11 +443,64 @@ func TestDesktopPlayerOverlayKeyboardNavigationScrollsAndSupportsHomeEnd(t *test
 	}
 }
 
+func TestDesktopRulesKeyboardScrollingAndWidthLimit(t *testing.T) {
+	app := test.NewApp()
+	defer app.Quit()
+	window := app.NewWindow("test")
+	window.Resize(fyne.NewSize(1600, 800))
+	model := NewModel()
+	model.screen = screenRules
+	model.rulesText = strings.Repeat("A readable rules paragraph.\n\n", 100)
+	d := newTestDesktop(app, window, model)
+	d.render(true)
+	if d.rulesScroll == nil {
+		t.Fatal("rules page has no scroll container")
+	}
+	maxWidth := fyne.MeasureText(strings.Repeat("0", 120), 16, fyne.TextStyle{}).Width
+	if d.rulesScroll.Size().Width > maxWidth {
+		t.Fatalf("rules content width %v exceeds 120-character limit %v", d.rulesScroll.Size().Width, maxWidth)
+	}
+	d.dispatchKeyEvent(&fyne.KeyEvent{Name: fyne.KeyDown})
+	if d.rulesScroll.Offset.Y <= 0 {
+		t.Fatal("Down did not scroll rules")
+	}
+	d.dispatchKeyEvent(&fyne.KeyEvent{Name: fyne.KeyLeft})
+	if d.rulesScroll.Offset.Y != 0 {
+		t.Fatal("Left did not scroll rules up")
+	}
+	d.dispatchKeyEvent(&fyne.KeyEvent{Name: fyne.KeyRight})
+	if d.rulesScroll.Offset.Y <= 0 {
+		t.Fatal("Right did not scroll rules down")
+	}
+	d.dispatchKeyEvent(&fyne.KeyEvent{Name: fyne.KeyPageDown})
+	if d.rulesScroll.Offset.Y <= 24 {
+		t.Fatal("PgDn did not advance rules page")
+	}
+	d.dispatchKeyEvent(&fyne.KeyEvent{Name: fyne.KeyEnd})
+	if d.rulesScroll.Offset.Y < d.rulesScroll.Content.MinSize().Height-d.rulesScroll.Size().Height-1 {
+		t.Fatal("End did not reach end of rules")
+	}
+	d.dispatchKeyEvent(&fyne.KeyEvent{Name: fyne.KeyHome})
+	if d.rulesScroll.Offset.Y != 0 {
+		t.Fatal("Home did not return to top of rules")
+	}
+}
+
 func TestDesktopWindowContentHasSideInsets(t *testing.T) {
 	content := widget.NewLabel("content")
 	(windowSideInsetLayout{inset: 16}).Layout([]fyne.CanvasObject{content}, fyne.NewSize(500, 300))
 	if content.Position().X != 16 || content.Size().Width != 468 {
 		t.Fatalf("window content geometry = position %v size %v, want 16px side insets", content.Position(), content.Size())
+	}
+}
+
+func TestAverageStackRoundsDownToSmallestConfiguredChip(t *testing.T) {
+	chips := []config.ChipValue{{Value: 25}, {Value: 5}, {Value: 100}}
+	if got := roundedAverageStack(1667, chips); got != 1665 {
+		t.Fatalf("average stack = %d, want 1665", got)
+	}
+	if got := roundedAverageStack(1667, nil); got != 1667 {
+		t.Fatalf("average stack without denominations = %d, want 1667", got)
 	}
 }
 
@@ -433,12 +510,31 @@ func TestDesktopChipLegendUsesConfiguredValuesAndColors(t *testing.T) {
 		t.Fatal(err)
 	}
 	legend, ok := chipLegend(template.ChipValues).(*fyne.Container)
-	if !ok || len(legend.Objects) != 5 {
-		t.Fatalf("default chip legend = %#v", legend)
+	if !ok || len(legend.Objects) != 2 {
+		t.Fatalf("chip legend rows = %#v", legend)
 	}
-	first, ok := legend.Objects[0].(*chipToken)
-	if !ok || first.value != "5" || first.fill != (color.NRGBA{R: 0xff, A: 0xff}) {
-		t.Fatalf("first chip token = %#v", legend.Objects[0])
+	wantCounts := []int{3, 2}
+	var rowWidths []float32
+	for index, count := range wantCounts {
+		row, ok := legend.Objects[index].(*fyne.Container)
+		if !ok || len(row.Objects) != 1 {
+			t.Fatalf("chip row %d = %#v", index, legend.Objects[index])
+		}
+		chips, ok := row.Objects[0].(*fyne.Container)
+		if !ok || len(chips.Objects) != count {
+			t.Fatalf("chip row %d token count = %#v", index, chips)
+		}
+		rowWidths = append(rowWidths, chips.MinSize().Width)
+	}
+	if rowWidths[1] >= rowWidths[0] {
+		t.Fatalf("two-chip row width %v is not narrower than first row %v", rowWidths[1], rowWidths[0])
+	}
+	first := legend.Objects[0].(*fyne.Container).Objects[0].(*fyne.Container).Objects[0].(*chipToken)
+	if first.value != "5" || first.fill != (color.NRGBA{R: 0xff, A: 0xff}) {
+		t.Fatalf("first chip token = %#v", first)
+	}
+	if got := first.CreateRenderer().(*chipTokenRenderer).label.TextSize; got != 15 {
+		t.Fatalf("chip value font size = %v, want 15", got)
 	}
 }
 
@@ -454,11 +550,11 @@ func TestDesktopStatusAndNextBreakTypography(t *testing.T) {
 	if got := desktopStatus(model, &template.Schedule[0]); got != "LEVEL 1 RUNNING" {
 		t.Fatalf("level status = %q, want uppercase level and state", got)
 	}
-	if got := desktopNextBreak(model, 12000); !strings.HasPrefix(got, "Next Break ") || strings.HasPrefix(got, "NEXT BREAK") || strings.Contains(got, "Next Break  ") {
+	if got := desktopNextBreak(model, 12000); !strings.HasPrefix(got, "NEXT BREAK ") || strings.Contains(got, "NEXT BREAK  ") || !strings.Contains(got, "AVG. STACK") {
 		t.Fatalf("next-break label typography = %q", got)
 	}
-	white := color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0xff}
-	parts := desktopNextBreakParts(model, 12000)
+	white := Spacedust.Foreground
+	parts := desktopNextBreakParts(model, 12000, nil)
 	if len(parts) != 5 || parts[0].color != Spacedust.Blue || parts[1].color != white || parts[3].color != Spacedust.Blue || parts[4].color != white {
 		t.Fatalf("next-break property/value colors = %+v", parts)
 	}

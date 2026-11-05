@@ -196,7 +196,7 @@ func (m *Model) leftPanel() string {
 		fmt.Sprintf("Add-ons  %d · %s", m.summary.AddOns, m.summary.AddOnCents),
 		"",
 		fmt.Sprintf("Total stack   %s", formatChips(m.summary.TotalStack)),
-		fmt.Sprintf("Average stack %s", formatChips(m.summary.AverageStack)),
+		fmt.Sprintf("Average stack %s", formatChips(roundedAverageStack(m.summary.AverageStack, m.record.Config.ChipValues))),
 		fmt.Sprintf("Prize pool    %s", m.summary.PrizePoolCents),
 		"",
 		"Prizes",

@@ -48,6 +48,17 @@ func TestConfiguredPurchasesAndDeadlineWindows(t *testing.T) {
 	if addon.Chips != 5000 || addon.PriceCents != 200 {
 		t.Fatalf("add-on = %+v", addon)
 	}
+	players, err := service.Players(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	states := make(map[string]Player, len(players))
+	for _, listed := range players {
+		states[listed.ID] = listed
+	}
+	if !states[player.ID].HasAddOn || states[second.ID].HasAddOn {
+		t.Fatalf("add-on eligibility flags = %+v", states)
+	}
 	if _, err := service.Buy(ctx, player.ID, PurchaseAddOn, action); !errors.Is(err, ErrAddOnAlreadyPaid) {
 		t.Fatalf("second add-on error = %v", err)
 	}

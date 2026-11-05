@@ -36,6 +36,7 @@ type Player struct {
 	SittingOut      bool
 	Removed         bool
 	HasInitialBuyIn bool
+	HasAddOn        bool
 }
 
 type ActionContext struct {
@@ -120,7 +121,8 @@ func (s *Service) Players(ctx context.Context, includeRemoved bool) ([]Player, e
 	players := make([]Player, 0)
 	err := s.store.ViewTx(ctx, func(tx *sql.Tx) error {
 		query := `SELECT p.id, p.name, p.active, p.sitting_out, p.removed,
-			EXISTS (SELECT 1 FROM purchases b WHERE b.player_id = p.id AND b.kind = 'initial_buy_in' AND b.voided_by_event_id IS NULL)
+			EXISTS (SELECT 1 FROM purchases b WHERE b.player_id = p.id AND b.kind = 'initial_buy_in' AND b.voided_by_event_id IS NULL),
+			EXISTS (SELECT 1 FROM purchases a WHERE a.player_id = p.id AND a.kind = 'add_on' AND a.voided_by_event_id IS NULL)
 			FROM players p`
 		if !includeRemoved {
 			query += " WHERE p.removed = 0"
@@ -133,14 +135,15 @@ func (s *Service) Players(ctx context.Context, includeRemoved bool) ([]Player, e
 		defer rows.Close()
 		for rows.Next() {
 			var player Player
-			var active, sittingOut, removed, entrant int
-			if err := rows.Scan(&player.ID, &player.Name, &active, &sittingOut, &removed, &entrant); err != nil {
+			var active, sittingOut, removed, entrant, addon int
+			if err := rows.Scan(&player.ID, &player.Name, &active, &sittingOut, &removed, &entrant, &addon); err != nil {
 				return err
 			}
 			player.Active = active != 0
 			player.SittingOut = sittingOut != 0
 			player.Removed = removed != 0
 			player.HasInitialBuyIn = entrant != 0
+			player.HasAddOn = addon != 0
 			players = append(players, player)
 		}
 		return rows.Err()

@@ -58,6 +58,7 @@ type desktop struct {
 	keys           *desktopKeySink
 	browserScroll  *container.Scroll
 	modalScroll    *container.Scroll
+	rulesScroll    *container.Scroll
 	startupButtons []*widget.Button
 	browserButtons []*widget.Button
 	lastScreen     screen
@@ -103,6 +104,7 @@ func (d *desktop) render(force bool) {
 	d.home = nil
 	d.browserScroll = nil
 	d.modalScroll = nil
+	d.rulesScroll = nil
 	d.startupButtons = nil
 	d.browserButtons = nil
 	var content fyne.CanvasObject
@@ -227,9 +229,65 @@ func (d *desktop) scrollModalSelection(cursor int) {
 	d.modalScroll.ScrollToOffset(fyne.NewPos(0, float32(firstVisible)*rowHeight))
 }
 
+func (d *desktop) scrollRulesPage(direction float32) {
+	if d.rulesScroll != nil {
+		d.scrollRules(direction * d.rulesScroll.Size().Height * 0.9)
+	}
+}
+
+func (d *desktop) scrollRules(delta float32) {
+	if d.rulesScroll != nil {
+		d.scrollRulesTo(d.rulesScroll.Offset.Y + delta)
+	}
+}
+
+func (d *desktop) scrollRulesTo(offset float32) {
+	if d.rulesScroll == nil {
+		return
+	}
+	maxOffset := d.rulesScroll.Content.MinSize().Height - d.rulesScroll.Size().Height
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	if offset < 0 {
+		offset = 0
+	} else if offset > maxOffset {
+		offset = maxOffset
+	}
+	d.rulesScroll.ScrollToOffset(fyne.NewPos(0, offset))
+}
+
+func (d *desktop) scrollRulesToEnd() {
+	if d.rulesScroll != nil {
+		d.scrollRulesTo(d.rulesScroll.Content.MinSize().Height - d.rulesScroll.Size().Height)
+	}
+}
+
 func (d *desktop) dispatchKeyEvent(event *fyne.KeyEvent) {
 	if event == nil {
 		return
+	}
+	if d.model.screen == screenRules {
+		switch event.Name {
+		case fyne.KeyUp, fyne.KeyLeft:
+			d.scrollRules(-24)
+			return
+		case fyne.KeyDown, fyne.KeyRight:
+			d.scrollRules(24)
+			return
+		case fyne.KeyPageUp:
+			d.scrollRulesPage(-1)
+			return
+		case fyne.KeyPageDown:
+			d.scrollRulesPage(1)
+			return
+		case fyne.KeyHome:
+			d.scrollRulesTo(0)
+			return
+		case fyne.KeyEnd:
+			d.scrollRulesToEnd()
+			return
+		}
 	}
 	switch event.Name {
 	case fyne.KeySpace:

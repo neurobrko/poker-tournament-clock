@@ -2,6 +2,7 @@
 Type=Application
 Name=Poker Clock
 Comment=Fullscreen home tournament clock
-Exec=poker-clock-launcher.sh
+Exec=poker-clock
+Icon=poker-clock
 Terminal=false
 Categories=Game;Utility;
