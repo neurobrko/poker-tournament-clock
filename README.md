@@ -9,6 +9,12 @@ A desktop GUI for running self-hosted Texas Hold’em tournaments. The applicati
 - A supported desktop graphics environment. macOS and Windows builds need native toolchains for Fyne's desktop driver.
 - SQLite-compatible filesystem access for the tournament database.
 
+## Download
+
+Get the latest standalone binaries from [GitHub Releases](https://github.com/neurobrko/poker-tournament-clock/releases). Choose the file matching your OS and CPU: `poker-clock-linux-amd64`, `poker-clock-linux-arm64`, `poker-clock-darwin-amd64`, `poker-clock-darwin-arm64`, `poker-clock-windows-amd64.exe`, or `poker-clock-windows-arm64.exe`.
+
+On Linux and macOS, make the downloaded binary executable before launching it (for example, `chmod +x poker-clock-linux-amd64`). Linux also needs runtime OpenGL/X11 libraries. Releases are raw executables, not installers; they are currently unsigned and macOS builds are not notarized, so the OS may show a security warning.
+
 ## Run
 
 ```sh
@@ -79,4 +85,4 @@ The hooks format Go files, run `go test -tags ci ./...`, and run `go vet -tags c
 ./scripts/build-native.sh
 ```
 
-This writes `dist/poker-clock-<os>-<arch>` (for example, `dist/poker-clock-linux-amd64`; Windows binaries end in `.exe`). Fyne's desktop driver uses CGO and native graphics libraries, so build on each target OS with its native toolchain. With Gitea as `origin` and GitHub as a second remote, push branches to GitHub to run CI and push `v*` tags there to build Linux, macOS, and Windows binaries for amd64 and arm64 and publish a GitHub Release. GitHub Actions checks GitHub pull requests; Gitea pull request events do not trigger them. Actions must be enabled and the repository must have hosted-runner access for the matrix, including ARM runners. Sound availability depends on the system audio backend.
+This writes `dist/poker-clock-<os>-<arch>` (for example, `dist/poker-clock-linux-amd64`; Windows binaries end in `.exe`). Fyne's desktop driver uses CGO and native graphics libraries, so build on each target OS with its native toolchain. GitHub Actions runs checks on GitHub pushes and pull requests; pushing a `v*` tag there builds binaries for Linux, macOS, and Windows (amd64 and arm64) and publishes a GitHub Release. See [release instructions](docs/releasing.md) before tagging. Gitea pull request events do not trigger GitHub Actions, and release builds require Actions and hosted-runner access for the full matrix. Sound availability depends on the system audio backend.
