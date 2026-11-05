@@ -1,0 +1,121 @@
+name: CI and release
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+    branches: ['**']
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Check Go formatting
+        run: test -z "$(gofmt -l .)"
+      - run: go test -tags ci ./...
+      - run: go vet -tags ci ./...
+
+  build:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: checks
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            runner: ubuntu-24.04
+          - goos: linux
+            goarch: arm64
+            runner: ubuntu-24.04-arm
+          - goos: darwin
+            goarch: amd64
+            runner: macos-15-intel
+          - goos: darwin
+            goarch: arm64
+            runner: macos-15
+          - goos: windows
+            goarch: amd64
+            runner: windows-2022
+          - goos: windows
+            goarch: arm64
+            runner: windows-11-arm
+    env:
+      CGO_ENABLED: '1'
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install Linux desktop dependencies
+        if: matrix.goos == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y gcc pkg-config libgl1-mesa-dev xorg-dev
+      - name: Install Windows amd64 CGO toolchain
+        if: matrix.goos == 'windows' && matrix.goarch == 'amd64'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: mingw-w64-ucrt-x86_64-gcc
+      - name: Install Windows arm64 LLVM toolchain
+        if: matrix.goos == 'windows' && matrix.goarch == 'arm64'
+        run: |
+          winget install --id LLVM.LLVM --exact --silent --accept-source-agreements --accept-package-agreements
+          Add-Content -Path $env:GITHUB_PATH -Value "$env:ProgramFiles\LLVM\bin"
+        shell: pwsh
+      - name: Configure Windows arm64 compiler
+        if: matrix.goos == 'windows' && matrix.goarch == 'arm64'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: arm64
+      - name: Build Linux/macOS binary
+        if: matrix.goos != 'windows'
+        shell: bash
+        run: |
+          mkdir -p dist
+          go build -trimpath -o "dist/poker-clock-${GOOS}-${GOARCH}" ./cmd/poker-clock
+      - name: Build Windows binary
+        if: matrix.goos == 'windows'
+        shell: pwsh
+        env:
+          CC: ${{ matrix.goarch == 'amd64' && 'gcc' || 'clang' }}
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          $output = "dist/poker-clock-$($env:GOOS)-$($env:GOARCH).exe"
+          go build -trimpath -o $output ./cmd/poker-clock
+      - uses: actions/upload-artifact@v4
+        with:
+          name: poker-clock-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/poker-clock-*
+          if-no-files-found: error
+          retention-days: 1
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: poker-clock-*
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: dist/*

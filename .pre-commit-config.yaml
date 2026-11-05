@@ -1,0 +1,18 @@
+repos:
+  - repo: local
+    hooks:
+      - id: gofmt
+        name: gofmt
+        entry: gofmt -w
+        language: system
+        types: [go]
+      - id: go-test-ci
+        name: go test -tags ci ./...
+        entry: go test -tags ci ./...
+        language: system
+        pass_filenames: false
+      - id: go-vet-ci
+        name: go vet -tags ci ./...
+        entry: go vet -tags ci ./...
+        language: system
+        pass_filenames: false

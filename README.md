@@ -6,7 +6,7 @@ A desktop GUI for running self-hosted Texas Hold’em tournaments. The applicati
 
 - Go 1.24 or newer to build. Go 1.24.4 was used for development.
 - Linux build: C compiler, `pkg-config`, OpenGL development libraries, and X11 development headers. On Debian/Ubuntu: `sudo apt install gcc pkg-config libgl1-mesa-dev xorg-dev`.
-- A supported desktop graphics environment. Linux is the initial target; macOS and Windows remain portability targets and need native toolchains for Fyne's desktop driver.
+- A supported desktop graphics environment. macOS and Windows builds need native toolchains for Fyne's desktop driver.
 - SQLite-compatible filesystem access for the tournament database.
 
 ## Run
@@ -66,10 +66,17 @@ Transition sound is enabled by default and saved in the user's OS configuration 
 
 ## Build and test
 
+Install [pre-commit](https://pre-commit.com/#install), then enable the repository hooks and run them across all files:
+
 ```sh
-go test -race -tags ci ./...
-go vet -tags ci ./...
+pre-commit install
+pre-commit run --all-files
+```
+
+The hooks format Go files, run `go test -tags ci ./...`, and run `go vet -tags ci ./...`. To run the checks and build a native binary directly:
+
+```sh
 ./scripts/build-native.sh
 ```
 
-Fyne's desktop driver uses CGO and native graphics libraries. Build on each target OS with its native toolchain; Linux cross-compilation to macOS or Windows is not configured yet. See `scripts/build-native.sh` for native build output. Sound availability depends on the system audio backend.
+This writes `dist/poker-clock-<os>-<arch>` (for example, `dist/poker-clock-linux-amd64`; Windows binaries end in `.exe`). Fyne's desktop driver uses CGO and native graphics libraries, so build on each target OS with its native toolchain. With Gitea as `origin` and GitHub as a second remote, push branches to GitHub to run CI and push `v*` tags there to build Linux, macOS, and Windows binaries for amd64 and arm64 and publish a GitHub Release. GitHub Actions checks GitHub pull requests; Gitea pull request events do not trigger them. Actions must be enabled and the repository must have hosted-runner access for the matrix, including ARM runners. Sound availability depends on the system audio backend.
