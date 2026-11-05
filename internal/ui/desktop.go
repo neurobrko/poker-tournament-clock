@@ -1,13 +1,13 @@
-package tui
+package ui
 
 import (
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/widget"
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 // RunDesktop launches the Fyne desktop UI. The tournament model and persistence
@@ -26,6 +26,15 @@ func RunDesktop(application fyne.App) error {
 	window.Resize(fyne.NewSize(1280, 800))
 
 	controller := &desktop{app: application, window: window, model: NewModel()}
+	controller.model.asyncError = func(err error) {
+		fyne.Do(func() {
+			if controller.closed.Load() {
+				return
+			}
+			controller.model.setStatus(err, true)
+			controller.render(true)
+		})
+	}
 	controller.keys = newDesktopKeySink(controller)
 	controller.model.lastTick = time.Now()
 	controller.model.lastWall = stripMonotonic(controller.model.lastTick)
@@ -40,7 +49,7 @@ func RunDesktop(application fyne.App) error {
 	defer close(stop)
 	go controller.clockLoop(stop)
 	application.Run()
-	controller.closed = true
+	controller.closed.Store(true)
 	if controller.model.database != nil {
 		if err := controller.model.closeTournament(); err != nil {
 			return err
@@ -63,7 +72,7 @@ type desktop struct {
 	browserButtons []*widget.Button
 	lastScreen     screen
 	lastHasDB      bool
-	closed         bool
+	closed         atomic.Bool
 }
 
 func (d *desktop) clockLoop(stop <-chan struct{}) {
@@ -73,12 +82,12 @@ func (d *desktop) clockLoop(stop <-chan struct{}) {
 		select {
 		case <-stop:
 			return
-		case tick := <-ticker.C:
+		case <-ticker.C:
 			fyne.Do(func() {
-				if d.closed {
+				if d.closed.Load() {
 					return
 				}
-				d.model.onClockTick(tick)
+				d.model.onClockTick()
 				if d.model.screen == screenMain && d.home != nil {
 					d.home.refresh(d.model)
 					if d.model.modal != nil {
@@ -91,7 +100,7 @@ func (d *desktop) clockLoop(stop <-chan struct{}) {
 }
 
 func (d *desktop) render(force bool) {
-	if d.closed {
+	if d.closed.Load() {
 		return
 	}
 	m := d.model
@@ -291,25 +300,25 @@ func (d *desktop) dispatchKeyEvent(event *fyne.KeyEvent) {
 	}
 	switch event.Name {
 	case fyne.KeySpace:
-		d.dispatchTeaKey(tea.Key{Type: tea.KeySpace})
+		d.dispatchKey(keyEvent{Type: keySpace})
 	case fyne.KeyEscape:
-		d.dispatchTeaKey(tea.Key{Type: tea.KeyEsc})
+		d.dispatchKey(keyEvent{Type: keyEsc})
 	case fyne.KeyUp:
-		d.dispatchTeaKey(tea.Key{Type: tea.KeyUp})
+		d.dispatchKey(keyEvent{Type: keyUp})
 	case fyne.KeyDown:
-		d.dispatchTeaKey(tea.Key{Type: tea.KeyDown})
+		d.dispatchKey(keyEvent{Type: keyDown})
 	case fyne.KeyHome:
-		d.dispatchTeaKey(tea.Key{Type: tea.KeyHome})
+		d.dispatchKey(keyEvent{Type: keyHome})
 	case fyne.KeyEnd:
-		d.dispatchTeaKey(tea.Key{Type: tea.KeyEnd})
+		d.dispatchKey(keyEvent{Type: keyEnd})
 	case fyne.KeyLeft:
-		d.dispatchTeaKey(tea.Key{Type: tea.KeyLeft})
+		d.dispatchKey(keyEvent{Type: keyLeft})
 	case fyne.KeyRight:
-		d.dispatchTeaKey(tea.Key{Type: tea.KeyRight})
+		d.dispatchKey(keyEvent{Type: keyRight})
 	case fyne.KeyReturn, fyne.KeyEnter:
-		d.dispatchTeaKey(tea.Key{Type: tea.KeyEnter})
+		d.dispatchKey(keyEvent{Type: keyEnter})
 	case fyne.KeyBackspace, fyne.KeyDelete:
-		d.dispatchTeaKey(tea.Key{Type: tea.KeyBackspace})
+		d.dispatchKey(keyEvent{Type: keyBackspace})
 	case fyne.KeyF11:
 		d.window.SetFullScreen(!d.window.FullScreen())
 	}
@@ -328,15 +337,14 @@ func (d *desktop) dispatchRune(value rune) {
 	if value == 0 {
 		return
 	}
-	d.dispatchTeaKey(tea.Key{Type: tea.KeyRunes, Runes: []rune{value}})
+	d.dispatchKey(keyEvent{Type: keyRunes, Runes: []rune{value}})
 }
 
-func (d *desktop) dispatchTeaKey(key tea.Key) {
-	if d.closed {
+func (d *desktop) dispatchKey(key keyEvent) {
+	if d.closed.Load() {
 		return
 	}
-	_, command := d.model.onKey(tea.KeyMsg(key))
-	if command != nil {
+	if d.model.onKey(key) {
 		d.app.Quit()
 		return
 	}
@@ -344,7 +352,7 @@ func (d *desktop) dispatchTeaKey(key tea.Key) {
 }
 
 func (d *desktop) requestQuit() {
-	if d.closed {
+	if d.closed.Load() {
 		return
 	}
 	d.model.askQuit()
@@ -352,29 +360,18 @@ func (d *desktop) requestQuit() {
 }
 
 func (d *desktop) closeModal() {
-	d.dispatchTeaKey(tea.Key{Type: tea.KeyEsc})
+	d.dispatchKey(keyEvent{Type: keyEsc})
 }
 
-func (d *desktop) clickChoice(index, cursor int) {
-	if index < cursor {
-		for i := cursor; i > index; i-- {
-			d.model.onKey(tea.KeyMsg(tea.Key{Type: tea.KeyUp}))
-		}
-	} else {
-		for i := cursor; i < index; i++ {
-			d.model.onKey(tea.KeyMsg(tea.Key{Type: tea.KeyDown}))
-		}
+func (d *desktop) clickChoice(index, _ int) {
+	if d.model.modal != nil {
+		d.model.modal.cursor = index
 	}
-	_, command := d.model.onKey(tea.KeyMsg(tea.Key{Type: tea.KeyEnter}))
-	if command != nil {
-		d.app.Quit()
-		return
-	}
-	d.render(true)
+	d.dispatchKey(keyEvent{Type: keyEnter})
 }
 
 func (d *desktop) activate(key rune) {
-	d.dispatchTeaKey(tea.Key{Type: tea.KeyRunes, Runes: []rune{key}})
+	d.dispatchKey(keyEvent{Type: keyRunes, Runes: []rune{key}})
 }
 
 var _ fyne.Focusable = (*desktopKeySink)(nil)

@@ -1,10 +1,10 @@
 # Releasing
 
-GitHub Actions builds and publishes a GitHub Release when a `v*` tag is pushed to GitHub. The workflow is [`ci-release.yml`](../.github/workflows/ci-release.yml). It runs formatting, tests, and vet, then builds six standalone binaries and creates release notes automatically.
+GitHub Actions checks pushes and pull requests, including native Linux and supported-platform build checks for pull requests. Pushing a `v*` tag builds six standalone binaries and publishes a GitHub Release. The workflow is [`ci-release.yml`](../.github/workflows/ci-release.yml).
 
 ## Before the first public release
 
-- Choose the project license and add a root-level `LICENSE`. This repository currently has none. Confirm redistribution terms for bundled fonts, sounds, and other assets before publishing.
+- Verify the root `LICENSE` and confirm redistribution rights for bundled fonts and MP3 sounds. The font license is bundled beside the runtime font files; document sound provenance before redistribution.
 - Confirm GitHub Actions is enabled and hosted runners are available for every matrix target: Linux amd64/arm64, macOS amd64/arm64, and Windows amd64/arm64.
 - Review the README and configuration guide. Releases are unsigned raw executables; there are no installers, packages, or generated checksums.
 

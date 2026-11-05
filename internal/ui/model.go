@@ -1,9 +1,8 @@
-package tui
+package ui
 
 import (
 	"context"
 	"embed"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,13 +16,10 @@ import (
 	"git.mpx.sk/elvis/poker_clock/internal/sound"
 	"git.mpx.sk/elvis/poker_clock/internal/store"
 	"git.mpx.sk/elvis/poker_clock/internal/tournament"
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 //go:embed rules.md
 var embeddedDocs embed.FS
-
-type clockTickMsg time.Time
 
 type screen int
 
@@ -36,8 +32,6 @@ const (
 type Model struct {
 	screen screen
 
-	width, height int
-	tooSmall      bool
 	startupCursor int
 
 	browser         *fileBrowser
@@ -45,12 +39,13 @@ type Model struct {
 	pendingName     string
 	pendingTemplate config.Template
 
-	database    *store.Store
-	service     *tournament.Service
-	record      store.TournamentRecord
-	summary     tournament.Summary
-	players     []tournament.Player
-	placePrizes []domain.PlacePrize
+	database             *store.Store
+	service              *tournament.Service
+	record               store.TournamentRecord
+	summary              tournament.Summary
+	players              []tournament.Player
+	placePrizes          []domain.PlacePrize
+	finalResultAvailable bool
 
 	pendingEndExplanation  string
 	pendingEndChoices      map[int][]string
@@ -62,21 +57,22 @@ type Model struct {
 	modal          *dialog
 	suspendedModal *dialog
 	rulesText      string
-	rulesOffset    int
 
 	statusMessage string
 	statusIsError bool
 	notice        string
 
-	lastTick time.Time
-	lastWall time.Time
+	lastTick               time.Time
+	lastWall               time.Time
+	clockPersistenceFailed bool
 
-	prefs     preferences.Preferences
-	inhibitor *sleepinhibit.Inhibitor
+	prefs      preferences.Preferences
+	inhibitor  *sleepinhibit.Inhibitor
+	asyncError func(error)
 }
 
 func NewModel() *Model {
-	model := &Model{screen: screenStartup, width: 120, height: 36, prefs: preferences.Default()}
+	model := &Model{screen: screenStartup, prefs: preferences.Default()}
 	if prefs, err := preferences.Load(); err == nil {
 		model.prefs = prefs
 	} else {
@@ -90,67 +86,32 @@ func NewModel() *Model {
 	return model
 }
 
-func (m *Model) Init() tea.Cmd { return nextClockTick() }
+func (m *Model) onClockTick() { m.syncClock() }
 
-func nextClockTick() tea.Cmd {
-	return tea.Tick(time.Second, func(now time.Time) tea.Msg { return clockTickMsg(now) })
-}
-
-func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := message.(type) {
-	case tea.WindowSizeMsg:
-		wasSmall := m.tooSmall
-		m.width, m.height = msg.Width, msg.Height
-		m.tooSmall = msg.Width < 120 || msg.Height < 36
-		if wasSmall && !m.tooSmall && m.modal == nil && m.suspendedModal != nil {
-			m.modal, m.suspendedModal = m.suspendedModal, nil
-		}
-		return m, nil
-	case clockTickMsg:
-		m.onClockTick(time.Time(msg))
-		return m, nextClockTick()
-	case tea.KeyMsg:
-		return m.onKey(msg)
-	default:
-		return m, nil
-	}
-}
-
-func (m *Model) onClockTick(tick time.Time) {
-	wall := time.Now()
-	if m.lastTick.IsZero() {
-		m.lastTick = tick
-		m.lastWall = stripMonotonic(wall)
-		return
-	}
-	delta := tick.Sub(m.lastTick)
-	wallNow := stripMonotonic(wall)
-	wallDelta := wallNow.Sub(m.lastWall)
-	m.processClockDelta(delta, wallDelta, wall)
-	m.lastTick, m.lastWall = tick, wallNow
-}
-
-func (m *Model) processClockDelta(delta, wallDelta time.Duration, wall time.Time) {
+// processClockDelta returns false when persistence fails so the next update retries the full interval.
+func (m *Model) processClockDelta(delta, wallDelta time.Duration, wall time.Time) bool {
 	if m.service == nil {
-		return
+		return true
 	}
 	if wallDelta > delta+2*time.Second {
 		if m.record.Status == store.StatusRunning {
 			if err := m.service.PauseAfterSleep(context.Background(), wall); err != nil {
+				m.clockPersistenceFailed = true
 				m.setStatus(err, true)
-			} else {
-				m.notice = "Computer sleep detected — clock paused at last checkpoint."
-				m.setStatus(errors.New(m.notice), true)
+				m.refreshClock()
+				return false
 			}
+			m.notice = "Computer sleep detected — clock paused at last checkpoint."
+			m.setStatus(m.notice, true)
 		} else if m.record.Status == store.StatusPaused {
 			m.notice = "Computer sleep detected; tournament clock was already paused."
 		}
-		m.refresh()
-		return
+		return m.refreshClock()
 	}
 	warnMinute := false
 	levelChime := false
 	warningSegment := 0
+	clockAdvanced := false
 	if m.record.Status == store.StatusRunning && delta > 0 {
 		before := m.record.Checkpoint
 		warningSegment = before.SegmentIndex
@@ -158,23 +119,47 @@ func (m *Model) processClockDelta(delta, wallDelta time.Duration, wall time.Time
 		levelChime = shouldPlayLevelChangeSound(before, delta, m.record.Config.Schedule, m.summary)
 		transitions, err := m.service.AdvanceClock(context.Background(), delta, wall)
 		if err != nil {
+			m.clockPersistenceFailed = true
 			m.setStatus(err, true)
-			warnMinute, levelChime = false, false
-		} else {
-			if levelChime {
-				m.playLevelChangeSound()
-			}
-			if len(transitions) > 0 {
-				m.notice = transitionNotice(transitions, m.record.Config.Schedule)
-			}
+			m.refreshClock()
+			return false
+		}
+		clockAdvanced = true
+		if levelChime {
+			m.playLevelChangeSound()
+		}
+		if len(transitions) > 0 {
+			m.notice = transitionNotice(transitions, m.record.Config.Schedule)
 		}
 	}
-	m.refresh()
+	if !m.refreshClock() {
+		return clockAdvanced
+	}
 	if warnMinute && m.record.Status == store.StatusRunning && m.record.Checkpoint.SegmentIndex == warningSegment && m.record.Checkpoint.Remaining > 0 && m.record.Checkpoint.Remaining <= time.Minute+time.Second {
-		if soundErr := sound.PlayMinuteWarningDesktop(m.prefs.MinuteSoundFile, m.prefs.SoundEnabled); soundErr != nil {
+		if soundErr := sound.PlayMinuteWarningDesktop(m.prefs.MinuteSoundFile, m.prefs.SoundEnabled, m.onAsyncError); soundErr != nil {
 			m.setStatus(soundErr, true)
 		}
 	}
+	return true
+}
+
+func (m *Model) onAsyncError(err error) {
+	if m.asyncError != nil && err != nil {
+		m.asyncError(err)
+	}
+}
+
+func (m *Model) refreshClock() bool {
+	if m.database == nil || m.service == nil {
+		return true
+	}
+	record, err := m.database.Tournament(context.Background())
+	if err != nil {
+		m.setStatus(err, true)
+		return false
+	}
+	m.record = record
+	return true
 }
 
 func upcomingLevelAvailable(checkpoint store.Checkpoint, schedule []config.Segment, summary tournament.Summary) bool {
@@ -190,7 +175,7 @@ func upcomingLevelAvailable(checkpoint store.Checkpoint, schedule []config.Segme
 }
 
 func (m *Model) playLevelChangeSound() {
-	if soundErr := sound.PlayDesktop(m.prefs.SoundFile, m.prefs.SoundEnabled); soundErr != nil {
+	if soundErr := sound.PlayDesktop(m.prefs.SoundFile, m.prefs.SoundEnabled, m.onAsyncError); soundErr != nil {
 		m.setStatus(soundErr, true)
 	}
 }
@@ -216,16 +201,22 @@ func (m *Model) syncClock() {
 	}
 	now := time.Now()
 	if m.lastTick.IsZero() {
-		m.lastTick = now
-		m.lastWall = stripMonotonic(now)
+		m.resetClockAnchor(now)
 		return
 	}
-	delta := now.Sub(m.lastTick)
 	wallNow := stripMonotonic(now)
-	wallDelta := wallNow.Sub(m.lastWall)
-	m.processClockDelta(delta, wallDelta, now)
+	if m.processClockDelta(now.Sub(m.lastTick), wallNow.Sub(m.lastWall), now) {
+		m.lastTick, m.lastWall = now, wallNow
+		if m.clockPersistenceFailed {
+			m.setStatus("Clock checkpoint recovered.", false)
+		}
+		m.clockPersistenceFailed = false
+	}
+}
+
+func (m *Model) resetClockAnchor(now time.Time) {
 	m.lastTick = now
-	m.lastWall = wallNow
+	m.lastWall = stripMonotonic(now)
 }
 
 func stripMonotonic(value time.Time) time.Time {
@@ -272,6 +263,8 @@ func (m *Model) refresh() {
 		m.placePrizes = nil
 		m.setStatus(err, true)
 	}
+	_, finalErr := m.service.LatestFinalResult(context.Background())
+	m.finalResultAvailable = finalErr == nil
 }
 
 func (m *Model) openTournament(database *store.Store) {
@@ -318,27 +311,36 @@ func (m *Model) closeTournament() error {
 	return firstErr
 }
 
-func (m *Model) onKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if key.Type == tea.KeyCtrlC {
-		m.askQuit()
-		return m, nil
-	}
-	if m.tooSmall {
-		return m.handleSmallTerminalKey(key)
+func (m *Model) onKey(key keyEvent) bool {
+	if m.clockPersistenceFailed {
+		m.syncClock()
+		if m.clockPersistenceFailed {
+			canDismiss := key.Type == keyEsc || key.Type == keyRunes && strings.EqualFold(key.String(), "q")
+			if m.modal != nil && m.modal.confirm == confirmQuit {
+				canDismiss = canDismiss || key.Type == keyEnter || key.Type == keyRunes && (strings.EqualFold(key.String(), "y") || strings.EqualFold(key.String(), "n"))
+			}
+			if m.modal != nil && m.modal.kind == dialogMessage && key.Type == keyEnter {
+				canDismiss = true
+			}
+			if !canDismiss {
+				m.setStatus("Clock checkpoint failed; retrying before accepting actions.", true)
+				return false
+			}
+		}
 	}
 	if m.modal != nil {
-		if key.Type == tea.KeyRunes && strings.EqualFold(key.String(), "q") && m.modal.kind != dialogText {
+		if key.Type == keyRunes && strings.EqualFold(key.String(), "q") && m.modal.kind != dialogText {
 			m.suspendedModal = m.modal
 			m.modal = nil
 			m.askQuit()
-			return m, nil
+			return false
 		}
 		return m.handleDialogKey(key)
 	}
 	if m.browser != nil {
-		if key.Type == tea.KeyRunes && strings.EqualFold(key.String(), "q") {
+		if key.Type == keyRunes && strings.EqualFold(key.String(), "q") {
 			m.askQuit()
-			return m, nil
+			return false
 		}
 		return m.handleBrowserKey(key)
 	}
@@ -351,37 +353,13 @@ func (m *Model) onKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m.handleMainKey(key)
 }
 
-func (m *Model) handleSmallTerminalKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.modal != nil && m.modal.kind == dialogConfirm {
-		if key.Type == tea.KeyEnter || key.Type == tea.KeyEsc || key.Type == tea.KeyRunes && (strings.EqualFold(key.String(), "y") || strings.EqualFold(key.String(), "n")) {
-			return m.handleConfirmDialog(key, m.modal)
-		}
-	}
-	if key.Type != tea.KeyRunes && key.Type != tea.KeySpace {
-		return m, nil
-	}
-	if key.Type == tea.KeyRunes && strings.EqualFold(key.String(), "q") {
-		m.askQuit()
-		return m, nil
-	}
-	if key.Type == tea.KeySpace {
-		if m.modal != nil {
-			m.suspendedModal = m.modal
-			m.modal = nil
-		}
-		m.toggleClock()
-		return m, nil
-	}
-	return m, nil
-}
-
-func (m *Model) handleStartupKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *Model) handleStartupKey(key keyEvent) bool {
 	switch key.Type {
-	case tea.KeyUp, tea.KeyLeft:
+	case keyUp, keyLeft:
 		m.startupCursor = (m.startupCursor + 2) % 3
-	case tea.KeyDown, tea.KeyRight:
+	case keyDown, keyRight:
 		m.startupCursor = (m.startupCursor + 1) % 3
-	case tea.KeyEnter:
+	case keyEnter:
 		switch m.startupCursor {
 		case 0:
 			m.modal = &dialog{kind: dialogText, title: "New tournament", prompt: "Tournament name", textPurpose: textTournamentName}
@@ -390,9 +368,9 @@ func (m *Model) handleStartupKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case 2:
 			m.askQuit()
 		}
-	case tea.KeyEsc:
+	case keyEsc:
 		m.askQuit()
-	case tea.KeyRunes:
+	case keyRunes:
 		switch strings.ToLower(key.String()) {
 		case "n":
 			m.startupCursor = 0
@@ -404,19 +382,19 @@ func (m *Model) handleStartupKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.askQuit()
 		}
 	}
-	return m, nil
+	return false
 }
 
-func (m *Model) handleMainKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if key.Type == tea.KeySpace {
+func (m *Model) handleMainKey(key keyEvent) bool {
+	if key.Type == keySpace {
 		m.toggleClock()
-		return m, nil
+		return false
 	}
-	if key.Type == tea.KeyEsc {
-		return m, nil
+	if key.Type == keyEsc {
+		return false
 	}
-	if key.Type != tea.KeyRunes {
-		return m, nil
+	if key.Type != keyRunes {
+		return false
 	}
 	switch key.String() {
 	case "q", "Q":
@@ -428,7 +406,11 @@ func (m *Model) handleMainKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "a", "A":
 		m.openPurchase(tournament.PurchaseAddOn)
 	case "p", "P":
-		m.modal = &dialog{kind: dialogMenu, purpose: menuPlayers, title: "Players", choices: []string{"Add player", "Player info / history", "Rename player", "Remove player", "Void purchase"}}
+		choices := []string{"Add player", "Player info / history", "Rename player", "Remove player", "Void purchase"}
+		if m.record.Status == store.StatusEnded {
+			choices = []string{"Player info / history"}
+		}
+		m.modal = &dialog{kind: dialogMenu, purpose: menuPlayers, title: "Players", choices: choices}
 	case "x", "X":
 		m.modal = &dialog{kind: dialogMenu, purpose: menuBusts, title: "Bust management", choices: []string{"Record bust", "Void a bust event", "Correct a bust participant"}}
 	case "o", "O":
@@ -441,74 +423,58 @@ func (m *Model) handleMainKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.beginEnd()
 	case "?":
 		m.screen = screenRules
-		m.rulesOffset = 0
 	case "n", "N":
 		m.toggleSound()
+	case "f", "F":
+		m.showFinalResults()
 	}
-	return m, nil
+	return false
 }
 
-func (m *Model) handleRulesKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *Model) handleRulesKey(key keyEvent) bool {
 	switch key.Type {
-	case tea.KeySpace:
+	case keySpace:
 		m.toggleClock()
-	case tea.KeyEsc:
+	case keyEsc:
 		m.screen = screenMain
-	case tea.KeyUp, tea.KeyLeft:
-		if m.rulesOffset > 0 {
-			m.rulesOffset--
-		}
-	case tea.KeyDown, tea.KeyRight:
-		m.rulesOffset++
-	case tea.KeyPgUp:
-		m.rulesOffset -= 10
-		if m.rulesOffset < 0 {
-			m.rulesOffset = 0
-		}
-	case tea.KeyPgDown:
-		m.rulesOffset += 10
-	case tea.KeyHome:
-		m.rulesOffset = 0
-	case tea.KeyEnd:
-		m.rulesOffset = len(strings.Split(m.rulesText, "\n"))
-	case tea.KeyRunes:
+	case keyRunes:
 		if key.String() == "?" {
 			m.screen = screenMain
 		} else if strings.EqualFold(key.String(), "q") {
 			m.askQuit()
 		}
 	}
-	return m, nil
+	return false
 }
 
-func (m *Model) handleBrowserKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *Model) handleBrowserKey(key keyEvent) bool {
 	switch key.Type {
-	case tea.KeyEsc:
+	case keyEsc:
 		m.browser = nil
 		m.screen = m.browserCancel
-	case tea.KeyUp:
+	case keyUp:
 		m.browser.move(-1)
-	case tea.KeyDown:
+	case keyDown:
 		m.browser.move(1)
-	case tea.KeyHome:
+	case keyHome:
 		m.browser.cursor = 0
-	case tea.KeyEnd:
+	case keyEnd:
 		m.browser.cursor = len(m.browser.entries) - 1
-	case tea.KeyBackspace:
+	case keyBackspace:
 		m.browser.directory = filepath.Dir(m.browser.directory)
 		if err := m.browser.reload(); err != nil {
 			m.setStatus(err, true)
 		}
-	case tea.KeyEnter:
+	case keyEnter:
 		path, done, err := m.browser.enter()
 		if err != nil {
 			m.setStatus(err, true)
-			return m, nil
+			return false
 		}
 		if done {
 			m.browserSelected(path)
 		}
-	case tea.KeyRunes:
+	case keyRunes:
 		switch strings.ToLower(key.String()) {
 		case "n":
 			if m.browser.purpose == browseSaveDatabase || m.browser.purpose == browseSaveTemplate {
@@ -524,7 +490,7 @@ func (m *Model) handleBrowserKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 	}
-	return m, nil
+	return false
 }
 
 func (m *Model) browserSelected(path string) {
@@ -623,18 +589,14 @@ func (m *Model) startBrowser(purpose browserPurpose, cancelTo screen) {
 	m.modal = nil
 }
 
-func (m *Model) completeNewTemplateChoice(useDefault bool) {
-	if useDefault {
-		template, err := config.DefaultTemplate()
-		if err != nil {
-			m.showMessage("Default template failed", err.Error())
-			return
-		}
-		m.pendingTemplate = template
-		m.startBrowser(browseSaveDatabase, screenStartup)
+func (m *Model) completeNewTemplateChoice() {
+	template, err := config.DefaultTemplate()
+	if err != nil {
+		m.showMessage("Default template failed", err.Error())
 		return
 	}
-	m.startBrowser(browseTemplate, screenStartup)
+	m.pendingTemplate = template
+	m.startBrowser(browseSaveDatabase, screenStartup)
 }
 
 func (m *Model) defaultFilename() string {
@@ -668,7 +630,7 @@ func (m *Model) openPurchase(kind tournament.PurchaseKind) {
 			m.showMessage("Add-on unavailable", tournament.ErrAddOnsDisabled.Error())
 			return
 		}
-		if !m.addOnWindowOpen() {
+		if !tournament.AddOnWindowOpen(m.record.Config, m.record.Checkpoint.SegmentIndex, m.record.Checkpoint.SegmentFinished) {
 			m.showMessage("Add-on unavailable", tournament.ErrAddOnWindowClosed.Error())
 			return
 		}
@@ -795,6 +757,7 @@ func (m *Model) toggleClock() {
 		if err != nil {
 			m.showMessage("Resume failed", err.Error())
 		} else {
+			m.resetClockAnchor(time.Now())
 			m.refresh()
 			if len(transitions) > 0 {
 				m.notice = transitionNotice(transitions, m.record.Config.Schedule)
@@ -838,12 +801,12 @@ func (m *Model) toggleSound() {
 	}
 }
 
-func (m *Model) finishQuitCommand() tea.Cmd {
+func (m *Model) finishQuit() bool {
 	if err := m.closeTournament(); err != nil {
 		m.showMessage("Exit warning", err.Error())
-		return nil
+		return false
 	}
-	return tea.Quit
+	return true
 }
 
 func (m *Model) showMessage(title, message string) {

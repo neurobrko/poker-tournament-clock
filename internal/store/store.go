@@ -20,6 +20,8 @@ import (
 )
 
 const (
+	// MaxNameLength caps display names accepted by the app.
+	MaxNameLength         = 80
 	currentSchemaVersion  = 4
 	databaseApplicationID = 1346587723 // ASCII "PCLK".
 )
@@ -113,6 +115,9 @@ func Create(ctx context.Context, path, name string, template config.Template) (*
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, fmt.Errorf("tournament name is required")
+	}
+	if len([]rune(name)) > MaxNameLength {
+		return nil, fmt.Errorf("tournament name cannot exceed %d characters", MaxNameLength)
 	}
 	if err := template.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid tournament template: %w", err)
@@ -465,6 +470,9 @@ func (s *Store) RenameTournament(ctx context.Context, name string, at time.Time)
 	if name == "" {
 		return fmt.Errorf("tournament name is required")
 	}
+	if len([]rune(name)) > MaxNameLength {
+		return fmt.Errorf("tournament name cannot exceed %d characters", MaxNameLength)
+	}
 	if at.IsZero() {
 		at = time.Now()
 	}
@@ -472,30 +480,6 @@ func (s *Store) RenameTournament(ctx context.Context, name string, at time.Time)
 	_, err := s.CommitEvent(ctx, EventInput{Kind: "tournament_renamed", Payload: payload, WallTime: at}, nil,
 		func(tx *sql.Tx, _ int64) error {
 			result, err := tx.ExecContext(ctx, `UPDATE tournament SET name = ?, updated_at = ? WHERE id = 1 AND status = ?`, name, FormatWallTime(at), StatusNotStarted)
-			if err != nil {
-				return err
-			}
-			return requirePrestartUpdate(ctx, tx, result)
-		})
-	return err
-}
-
-// UpdateConfiguration replaces the durable template only before play starts.
-func (s *Store) UpdateConfiguration(ctx context.Context, template config.Template, at time.Time) error {
-	if err := template.Validate(); err != nil {
-		return fmt.Errorf("invalid tournament configuration: %w", err)
-	}
-	configJSON, err := json.Marshal(template)
-	if err != nil {
-		return fmt.Errorf("encode tournament configuration: %w", err)
-	}
-	if at.IsZero() {
-		at = time.Now()
-	}
-	payload := map[string]any{"configuration": json.RawMessage(configJSON)}
-	_, err = s.CommitEvent(ctx, EventInput{Kind: "configuration_changed", Payload: payload, WallTime: at}, nil,
-		func(tx *sql.Tx, _ int64) error {
-			result, err := tx.ExecContext(ctx, `UPDATE tournament SET configuration_json = ?, updated_at = ? WHERE id = 1 AND status = ?`, string(configJSON), FormatWallTime(at), StatusNotStarted)
 			if err != nil {
 				return err
 			}

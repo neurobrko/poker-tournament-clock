@@ -109,46 +109,38 @@ func TestDatabasePathWithURICharacters(t *testing.T) {
 	}
 }
 
-func TestConfigurationUpdatesAreAuditedAndLockAfterStart(t *testing.T) {
+func TestTournamentRenameIsAuditedAndLockedAfterStart(t *testing.T) {
 	ctx := context.Background()
-	store := createTestStore(t)
-	defer store.Close()
+	database := createTestStore(t)
+	defer database.Close()
 
-	if err := store.RenameTournament(ctx, "  Saturday  ", time.Time{}); err != nil {
+	if err := database.RenameTournament(ctx, "  Saturday  ", time.Time{}); err != nil {
 		t.Fatal(err)
 	}
-	template, err := config.DefaultTemplate()
+	record, err := database.Tournament(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	template.Purchases.AddOn.Chips = 6000
-	if err := store.UpdateConfiguration(ctx, template, time.Time{}); err != nil {
-		t.Fatal(err)
-	}
-	record, err := store.Tournament(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if record.Name != "Saturday" || record.Config.Purchases.AddOn.Chips != 6000 {
-		t.Fatalf("updated tournament record = %+v", record)
+	if record.Name != "Saturday" {
+		t.Fatalf("renamed tournament = %q", record.Name)
 	}
 
-	if _, err := store.db.ExecContext(ctx, "UPDATE tournament SET status = ? WHERE id = 1", StatusPaused); err != nil {
+	if _, err := database.db.ExecContext(ctx, "UPDATE tournament SET status = ? WHERE id = 1", StatusPaused); err != nil {
 		t.Fatal(err)
 	}
-	before, err := store.Events(ctx)
+	before, err := database.Events(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.UpdateConfiguration(ctx, template, time.Now()); !errors.Is(err, ErrConfigurationLocked) {
-		t.Fatalf("configuration update after start error = %v, want ErrConfigurationLocked", err)
+	if err := database.RenameTournament(ctx, "Sunday", time.Now()); !errors.Is(err, ErrConfigurationLocked) {
+		t.Fatalf("rename after start error = %v, want ErrConfigurationLocked", err)
 	}
-	after, err := store.Events(ctx)
+	after, err := database.Events(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(after) != len(before) {
-		t.Fatalf("rejected edit left audit event behind: before=%d after=%d", len(before), len(after))
+		t.Fatalf("rejected rename left audit event behind: before=%d after=%d", len(before), len(after))
 	}
 }
 

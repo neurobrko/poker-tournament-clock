@@ -19,13 +19,17 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Install native Linux desktop dependencies
+        run: sudo apt-get update && sudo apt-get install -y gcc pkg-config libgl1-mesa-dev xorg-dev
       - name: Check Go formatting
         run: test -z "$(gofmt -l .)"
       - run: go test -tags ci ./...
       - run: go vet -tags ci ./...
+      - name: Build native Linux desktop app
+        run: go build -trimpath -o /tmp/poker-clock-ci ./cmd/poker-clock
 
   build:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'pull_request'
     needs: checks
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -95,7 +99,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
           $output = "dist/poker-clock-$($env:GOOS)-$($env:GOARCH).exe"
-          go build -trimpath -o $output ./cmd/poker-clock
+          go build -trimpath -ldflags="-H=windowsgui" -o $output ./cmd/poker-clock
       - uses: actions/upload-artifact@v4
         with:
           name: poker-clock-${{ matrix.goos }}-${{ matrix.goarch }}

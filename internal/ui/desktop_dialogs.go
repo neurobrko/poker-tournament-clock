@@ -1,4 +1,4 @@
-package tui
+package ui
 
 import (
 	"fmt"
@@ -10,7 +10,7 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
-	tea "github.com/charmbracelet/bubbletea"
+	"git.mpx.sk/elvis/poker_clock/internal/store"
 )
 
 func (d *desktop) modalOverlay(base fyne.CanvasObject, modal *dialog) fyne.CanvasObject {
@@ -76,12 +76,9 @@ func (d *desktop) textDialog(modal *dialog) fyne.CanvasObject {
 	entry.SetText(modal.input)
 	entry.SetPlaceHolder(modal.prompt)
 	entry.OnChanged = func(value string) { modal.input = value }
-	entry.OnSubmitted = func(string) {
-		d.dispatchTeaKey(tea.Key{Type: tea.KeyEnter})
-	}
 	maxChars := 200
 	if modal.textPurpose == textTournamentName || modal.textPurpose == textTournamentNameRename || modal.textPurpose == textAddPlayer || modal.textPurpose == textRenamePlayer {
-		maxChars = 80
+		maxChars = store.MaxNameLength
 	}
 	entry.Validator = func(value string) error {
 		if len([]rune(value)) > maxChars {
@@ -94,11 +91,18 @@ func (d *desktop) textDialog(modal *dialog) fyne.CanvasObject {
 		escape:     func() { d.closeModal() },
 		fullscreen: func() { d.window.SetFullScreen(!d.window.FullScreen()) },
 	}
-
-	submit := d.modalButton("Continue  ·  Enter", func() {
+	submitText := func() {
 		modal.input = entry.Text
-		d.dispatchTeaKey(tea.Key{Type: tea.KeyEnter})
-	})
+		if err := entry.Validate(); err != nil {
+			d.model.setStatus(err, true)
+			d.render(true)
+			return
+		}
+		d.dispatchKey(keyEvent{Type: keyEnter})
+	}
+	entry.OnSubmitted = func(string) { submitText() }
+
+	submit := d.modalButton("Continue  ·  Enter", submitText)
 	submit.Importance = widget.HighImportance
 	cancel := d.modalButton("Cancel  ·  Esc", func() { d.closeModal() })
 	return container.NewVBox(prompt, d.entry, container.NewHBox(layout.NewSpacer(), cancel, submit))
@@ -107,7 +111,7 @@ func (d *desktop) textDialog(modal *dialog) fyne.CanvasObject {
 func (d *desktop) confirmDialog() fyne.CanvasObject {
 	cancel := d.modalButton("No  ·  Esc", func() { d.closeModal() })
 	confirm := d.modalButton("Yes  ·  Enter", func() {
-		d.dispatchTeaKey(tea.Key{Type: tea.KeyRunes, Runes: []rune{'y'}})
+		d.dispatchKey(keyEvent{Type: keyRunes, Runes: []rune{'y'}})
 	})
 	confirm.Importance = widget.HighImportance
 	return container.NewHBox(layout.NewSpacer(), cancel, confirm)
@@ -171,7 +175,7 @@ func (d *desktop) multiPlayerDialog(modal *dialog) fyne.CanvasObject {
 		}
 		button := d.newButton(label, func() {
 			d.moveDialogCursor(index, modal.cursor)
-			d.dispatchTeaKey(tea.Key{Type: tea.KeySpace})
+			d.dispatchKey(keyEvent{Type: keySpace})
 		})
 		button.Alignment = widget.ButtonAlignLeading
 		if index == modal.cursor {
@@ -184,7 +188,7 @@ func (d *desktop) multiPlayerDialog(modal *dialog) fyne.CanvasObject {
 		buttons = append(buttons, d.modalButton("Toggle tie for selected  ·  T", func() { d.activate('t') }))
 	}
 	buttons = append(buttons,
-		d.modalButton("Continue  ·  Enter", func() { d.dispatchTeaKey(tea.Key{Type: tea.KeyEnter}) }),
+		d.modalButton("Continue  ·  Enter", func() { d.dispatchKey(keyEvent{Type: keyEnter}) }),
 		d.modalButton("Cancel  ·  Esc", func() { d.closeModal() }),
 	)
 	return container.NewVBox(d.listScroll(rows), container.NewHBox(buttons...))
@@ -208,15 +212,9 @@ func (d *desktop) participantDialog(modal *dialog) fyne.CanvasObject {
 	return container.NewVBox(list, container.NewHBox(layout.NewSpacer(), remove))
 }
 
-func (d *desktop) moveDialogCursor(target, cursor int) {
-	if target < cursor {
-		for index := cursor; index > target; index-- {
-			d.model.onKey(tea.KeyMsg(tea.Key{Type: tea.KeyUp}))
-		}
-	} else {
-		for index := cursor; index < target; index++ {
-			d.model.onKey(tea.KeyMsg(tea.Key{Type: tea.KeyDown}))
-		}
+func (d *desktop) moveDialogCursor(target, _ int) {
+	if d.model.modal != nil {
+		d.model.modal.cursor = target
 	}
 }
 
@@ -265,7 +263,7 @@ func (d *desktop) browserView() fyne.CanvasObject {
 	title.TextStyle = fyne.TextStyle{Bold: true}
 	path := widget.NewLabel(browser.directory)
 	path.Wrapping = fyne.TextWrapBreak
-	up := d.newButton("Bck · Parent folder", func() { d.dispatchTeaKey(tea.Key{Type: tea.KeyBackspace}) })
+	up := d.newButton("Bck · Parent folder", func() { d.dispatchKey(keyEvent{Type: keyBackspace}) })
 	entries := make([]fyne.CanvasObject, 0, len(browser.entries))
 	for index, entry := range browser.entries {
 		index, entry := index, entry
@@ -275,7 +273,7 @@ func (d *desktop) browserView() fyne.CanvasObject {
 		}
 		button := d.newButton(label, func() {
 			d.moveBrowserCursor(index, browser.cursor)
-			d.dispatchTeaKey(tea.Key{Type: tea.KeyEnter})
+			d.dispatchKey(keyEvent{Type: keyEnter})
 		})
 		button.Alignment = widget.ButtonAlignLeading
 		if index == browser.cursor {
@@ -299,7 +297,7 @@ func (d *desktop) browserView() fyne.CanvasObject {
 		d.browserButtons = append(d.browserButtons, newFile)
 		footerButtons = append(footerButtons, newFile)
 	}
-	cancel := d.newButton("Esc · Cancel", func() { d.dispatchTeaKey(tea.Key{Type: tea.KeyEsc}) })
+	cancel := d.newButton("Esc · Cancel", func() { d.dispatchKey(keyEvent{Type: keyEsc}) })
 	d.browserButtons = append(d.browserButtons, cancel)
 	footerButtons = append(footerButtons, up, cancel)
 	controls := container.NewHScroll(container.NewHBox(footerButtons...))
@@ -345,15 +343,9 @@ func (d *desktop) toggleUnsupportedFiles() {
 	d.render(true)
 }
 
-func (d *desktop) moveBrowserCursor(target, cursor int) {
-	if target < cursor {
-		for index := cursor; index > target; index-- {
-			d.model.onKey(tea.KeyMsg(tea.Key{Type: tea.KeyUp}))
-		}
-	} else {
-		for index := cursor; index < target; index++ {
-			d.model.onKey(tea.KeyMsg(tea.Key{Type: tea.KeyDown}))
-		}
+func (d *desktop) moveBrowserCursor(target, _ int) {
+	if d.model.browser != nil {
+		d.model.browser.cursor = target
 	}
 }
 

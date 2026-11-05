@@ -1,4 +1,4 @@
-package tui
+package ui
 
 import (
 	"fmt"
@@ -13,7 +13,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 	"git.mpx.sk/elvis/poker_clock/internal/config"
 	"git.mpx.sk/elvis/poker_clock/internal/store"
-	tea "github.com/charmbracelet/bubbletea"
+	"git.mpx.sk/elvis/poker_clock/internal/tournament"
 )
 
 type desktopHome struct {
@@ -29,6 +29,7 @@ type desktopHome struct {
 	averageStack  *widget.Label
 	prizePool     *widget.Label
 	prizeRows     *fyne.Container
+	prizeKey      string
 	leftScroll    *container.Scroll
 	blinds        *fitText
 	timer         *fitText
@@ -147,8 +148,7 @@ func (d *desktop) actionColumn(h *desktopHome) fyne.CanvasObject {
 	}{
 		{' ', "Start / Pause"}, {'b', "Buy-in"}, {'r', "Rebuy"}, {'a', "Add-on"},
 		{'p', "Players"}, {'o', "Sit out / Return"}, {'l', "Levels"}, {'x', "Bust"},
-		{'s', "Settings"}, {'?', "Rules"}, {'h', "Hand resolver · later"},
-		{'t', "Timeline · later"}, {'n', "Sound"}, {'e', "End tournament"}, {'q', "Exit"},
+		{'s', "Settings"}, {'?', "Rules"}, {'f', "Final results"}, {'n', "Sound"}, {'e', "End tournament"}, {'q', "Exit"},
 	}
 	buttons := make([]fyne.CanvasObject, 0, len(items)+1)
 	buttons = append(buttons, title)
@@ -156,7 +156,7 @@ func (d *desktop) actionColumn(h *desktopHome) fyne.CanvasObject {
 		key := item.key
 		button := d.newButton("", func() {
 			if key == ' ' {
-				d.dispatchTeaKey(teaKeySpace())
+				d.dispatchKey(keyEvent{Type: keySpace})
 			} else {
 				d.activate(key)
 			}
@@ -204,29 +204,30 @@ func (h *desktopHome) refresh(m *Model) {
 	h.averageStack.SetText(formatDisplayChips(roundedAverageStack(m.summary.AverageStack, m.record.Config.ChipValues)))
 	h.prizePool.SetText(m.summary.PrizePoolCents.String())
 
-	h.prizeRows.Objects = nil
-	for _, prize := range m.placePrizes {
-		place := prize.Place
-		label := "Winner"
-		if place > 1 {
-			label = ordinalPlace(place)
+	completed := m.record.Status == store.StatusEnded && m.record.ResultCompleted != nil && *m.record.ResultCompleted
+	prizeKey := fmt.Sprintf("%v/%d/%t", m.placePrizes, m.summary.ActivePlayers, completed)
+	if prizeKey != h.prizeKey {
+		h.prizeRows.Objects = nil
+		for _, prize := range m.placePrizes {
+			label := "Winner"
+			if prize.Place > 1 {
+				label = ordinalPlace(prize.Place)
+			}
+			amountLabel := widget.NewLabel(config.EuroCents(prize.AmountCents).String())
+			row := statRow(label, amountLabel)
+			paid := prize.Place > int(m.summary.ActivePlayers) || completed
+			if paid {
+				h.prizeRows.Add(struckThroughObject(row))
+				continue
+			}
+			h.prizeRows.Add(row)
 		}
-		amountLabel := widget.NewLabel(config.EuroCents(prize.AmountCents).String())
-		row := statRow(label, amountLabel)
-		paid := place > int(m.summary.ActivePlayers)
-		if m.record.Status == store.StatusEnded && m.record.ResultCompleted != nil && *m.record.ResultCompleted {
-			paid = true
+		if len(m.placePrizes) == 0 {
+			h.prizeRows.Add(mutedLabel("No valid entrants"))
 		}
-		if paid {
-			h.prizeRows.Add(struckThroughObject(row))
-			continue
-		}
-		h.prizeRows.Add(row)
+		h.prizeRows.Refresh()
+		h.prizeKey = prizeKey
 	}
-	if len(m.placePrizes) == 0 {
-		h.prizeRows.Add(mutedLabel("No valid entrants"))
-	}
-	h.prizeRows.Refresh()
 
 	segment := currentDesktopSegment(m)
 	reminder := ""
@@ -354,24 +355,23 @@ func (h *desktopHome) updateActions(m *Model) {
 		rebuyLabel += "  ·  CLOSED"
 	}
 	set('r', rebuyLabel, rebuyDisabled, false)
-	addonDisabled := ended || !m.record.Config.Registration.AddOnsEnabled || !m.addOnWindowOpen()
+	addonDisabled := ended || !m.record.Config.Registration.AddOnsEnabled || !tournament.AddOnWindowOpen(m.record.Config, m.record.Checkpoint.SegmentIndex, m.record.Checkpoint.SegmentFinished)
 	addonLabel := "A  ·  Add-on"
 	if !m.record.Config.Registration.AddOnsEnabled {
 		addonLabel += "  ·  OFF"
-	} else if ended || m.record.RegistrationClosed {
+	} else if ended {
 		addonLabel += "  ·  CLOSED"
 	} else if addonDisabled {
 		addonLabel += "  ·  BREAK ONLY"
 	}
 	set('a', addonLabel, addonDisabled, false)
-	set('p', "P  ·  Players", ended, false)
+	set('p', "P  ·  Players", false, false)
 	set('o', "O  ·  Sit out / return", ended, false)
 	set('l', "L  ·  Levels", m.record.StartedAt == nil || ended, false)
 	set('x', "X  ·  Bust", m.record.StartedAt == nil || ended, false)
 	set('s', "S  ·  Settings", false, false)
 	set('?', "?  ·  Rules", false, false)
-	set('h', "H  ·  Hand resolver  ·  later", true, false)
-	set('t', "T  ·  Timeline  ·  later", true, false)
+	set('f', "F  ·  Final results", !m.finalResultAvailable, false)
 	soundLabel := "N  ·  Sound  ·  OFF"
 	if m.prefs.SoundEnabled {
 		soundLabel = "N  ·  Sound  ·  ON"
@@ -413,7 +413,7 @@ func (d *desktop) rulesView() fyne.CanvasObject {
 	d.rulesScroll = container.NewVScroll(body)
 	maxWidth := fyne.MeasureText(strings.Repeat("0", 120), 16, fyne.TextStyle{}).Width
 	content := container.New(&maxWidthLayout{width: maxWidth}, d.rulesScroll)
-	close := d.newButton("Back to tournament  ·  Esc", func() { d.dispatchTeaKey(teaKeyEsc()) })
+	close := d.newButton("Back to tournament  ·  Esc", func() { d.dispatchKey(keyEvent{Type: keyEsc}) })
 	close.Importance = widget.HighImportance
 	return container.NewBorder(container.NewPadded(title), container.NewPadded(close), nil, nil, content)
 }
@@ -491,17 +491,6 @@ func desktopNextBreakParts(m *Model, averageStack int64, status *fitText) []colo
 		{text: "AVG. STACK", color: Spacedust.Blue, bold: true},
 		{text: formatDisplayChips(averageStack), color: white, bold: true, fontSource: status, spaceBefore: true},
 	}
-}
-
-func desktopNextBreak(m *Model, averageStack int64) string {
-	var value strings.Builder
-	for _, part := range desktopNextBreakParts(m, averageStack, nil) {
-		if part.spaceBefore {
-			value.WriteByte(' ')
-		}
-		value.WriteString(part.text)
-	}
-	return value.String()
 }
 
 func desktopNextBlinds(m *Model) string {
@@ -1004,6 +993,3 @@ func (r *fitTextRenderer) Refresh() {
 }
 func (r *fitTextRenderer) Objects() []fyne.CanvasObject { return r.objects }
 func (r *fitTextRenderer) Destroy()                     {}
-
-func teaKeySpace() tea.Key { return tea.Key{Type: tea.KeySpace} }
-func teaKeyEsc() tea.Key   { return tea.Key{Type: tea.KeyEsc} }

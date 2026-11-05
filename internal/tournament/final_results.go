@@ -3,6 +3,7 @@ package tournament
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -17,8 +18,10 @@ func (s *Service) LatestFinalResult(ctx context.Context) (EndResult, error) {
 	err := s.store.ViewTx(ctx, func(tx *sql.Tx) error {
 		var eventID int64
 		var completed int
-		if err := tx.QueryRowContext(ctx, `SELECT event_id, completed, prize_pool_cents FROM tournament_ends
-			WHERE completed = 1 ORDER BY event_id DESC LIMIT 1`).Scan(&eventID, &completed, &result.PoolCents); err != nil {
+		var payload string
+		if err := tx.QueryRowContext(ctx, `SELECT e.event_id, e.completed, e.prize_pool_cents, a.payload_json FROM tournament_ends e
+			JOIN audit_events a ON a.id = e.event_id WHERE e.completed = 1 ORDER BY e.event_id DESC LIMIT 1`).
+			Scan(&eventID, &completed, &result.PoolCents, &payload); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return ErrNoFinalResult
 			}
@@ -28,6 +31,16 @@ func (s *Service) LatestFinalResult(ctx context.Context) (EndResult, error) {
 			return ErrNoFinalResult
 		}
 		result.Completed = true
+		var snapshot struct {
+			Standings []domain.FinishGroup `json:"standings"`
+		}
+		if err := json.Unmarshal([]byte(payload), &snapshot); err != nil {
+			return fmt.Errorf("decode final standings snapshot: %w", err)
+		}
+		result.Standings.Groups = snapshot.Standings
+		for _, group := range snapshot.Standings {
+			result.Standings.Entrants += int64(len(group.PlayerIDs))
+		}
 		rows, err := tx.QueryContext(ctx, `SELECT group_order, first_place, last_place, total_cents, pending_remainder_cents
 			FROM end_prize_groups WHERE end_event_id = ? ORDER BY group_order`, eventID)
 		if err != nil {
@@ -74,6 +87,5 @@ func (s *Service) LatestFinalResult(ctx context.Context) (EndResult, error) {
 	if err != nil {
 		return EndResult{}, err
 	}
-	result.Standings, err = s.CurrentStandings(ctx)
-	return result, err
+	return result, nil
 }

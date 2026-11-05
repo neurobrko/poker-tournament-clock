@@ -1,53 +1,47 @@
 package sound
 
 import (
-	"bytes"
-	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
+	"time"
 )
-
-func TestEmbeddedWAVAndDisabledPlayback(t *testing.T) {
-	if !bytes.HasPrefix(bundledWAV, []byte("RIFF")) || !bytes.Contains(bundledWAV, []byte("WAVE")) {
-		t.Fatal("embedded notification is not a WAV file")
-	}
-	if err := Play("", false); err != nil {
-		t.Fatalf("disabled sound attempted playback: %v", err)
-	}
-}
-
-func TestPlayDesktopDoesNotWriteTerminalBell(t *testing.T) {
-	original := os.Stderr
-	reader, writer, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	os.Stderr = writer
-	t.Cleanup(func() { os.Stderr = original })
-	if err := PlayDesktop("notification.ogg", true); err == nil {
-		t.Fatal("unsupported desktop sound unexpectedly succeeded")
-	}
-	if err := writer.Close(); err != nil {
-		t.Fatal(err)
-	}
-	os.Stderr = original
-	output, err := io.ReadAll(reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = reader.Close()
-	if len(output) != 0 {
-		t.Fatalf("GUI sound failure wrote to terminal stderr: %q", output)
-	}
-}
 
 func TestBundledDesktopMP3SoundsAreEmbedded(t *testing.T) {
 	if len(bundledLevelMP3) < 1000 || len(bundledMinuteMP3) < 1000 {
 		t.Fatalf("bundled level/minute MP3 too small: %d/%d", len(bundledLevelMP3), len(bundledMinuteMP3))
 	}
-	if err := PlayMinuteWarningDesktop("", false); err != nil {
+	if err := PlayMinuteWarningDesktop("", false, nil); err != nil {
 		t.Fatalf("disabled minute-warning sound attempted playback: %v", err)
+	}
+}
+
+func TestPlaybackFailureIsReportedAsynchronously(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("uses the Linux paplay backend")
+	}
+	dir := t.TempDir()
+	player := filepath.Join(dir, "paplay")
+	if err := os.WriteFile(player, []byte("#!/bin/sh\nexit 7\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	file := filepath.Join(dir, "sound.wav")
+	if err := os.WriteFile(file, []byte("RIFF"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	failed := make(chan error, 1)
+	if err := play(file, true, nil, ".wav", func(err error) { failed <- err }); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-failed:
+		if err == nil {
+			t.Fatal("playback callback returned nil error")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("playback failure was not reported")
 	}
 }
 

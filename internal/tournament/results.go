@@ -147,7 +147,7 @@ func (s *Service) EndTournament(ctx context.Context, explanation string, extraCh
 			wall = time.Now()
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE tournament SET status = ?, ended_at = ?, clock_running = 0,
-			registration_closed = 1, result_completed = ? WHERE id = 1`, store.StatusEnded, store.FormatWallTime(wall), nullableBool(completed)); err != nil {
+			registration_closed = 1, result_completed = ? WHERE id = 1`, store.StatusEnded, store.FormatWallTime(wall), boolInt(completed)); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO tournament_ends (event_id, completed, prize_pool_cents, explanation)
@@ -215,13 +215,6 @@ func (s *Service) ReopenTournament(ctx context.Context, explanation string, acti
 		return err
 	})
 	return err
-}
-
-func nullableBool(value bool) any {
-	if value {
-		return 1
-	}
-	return 0
 }
 
 func nullableText(value string) any {

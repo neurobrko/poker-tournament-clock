@@ -88,22 +88,13 @@ func CalculatePrizes(poolCents int64, entrants int, tiers []config.PrizeTier, fi
 		return nil, err
 	}
 
-	var placeCents []int64
-	if entrants == 1 {
-		placeCents = []int64{poolCents}
-	} else {
-		tier, err := selectPrizeTier(entrants, tiers)
-		if err != nil {
-			return nil, err
-		}
-		places := len(tier.Percentages)
-		if places > entrants {
-			places = entrants
-		}
-		placeCents, err = allocatePlaces(poolCents, tier.Percentages[:places])
-		if err != nil {
-			return nil, err
-		}
+	placePrizes, err := CalculatePlacePrizes(poolCents, entrants, tiers)
+	if err != nil {
+		return nil, err
+	}
+	placeCents := make([]int64, len(placePrizes))
+	for index, prize := range placePrizes {
+		placeCents[index] = prize.AmountCents
 	}
 
 	results := make([]PrizeGroup, 0, len(finishes))

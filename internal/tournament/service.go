@@ -56,6 +56,9 @@ func NormalizePlayerName(name string) (display, key string, err error) {
 	if display == "" {
 		return "", "", fmt.Errorf("player name is required")
 	}
+	if len([]rune(display)) > store.MaxNameLength {
+		return "", "", fmt.Errorf("player name cannot exceed %d characters", store.MaxNameLength)
+	}
 	key = norm.NFC.String(cases.Fold().String(display))
 	return display, key, nil
 }

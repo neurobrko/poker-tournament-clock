@@ -3,12 +3,12 @@ package tournament
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 
 	"git.mpx.sk/elvis/poker_clock/internal/domain"
-	"git.mpx.sk/elvis/poker_clock/internal/store"
 )
 
 var (
@@ -30,10 +30,30 @@ type BustRequest struct {
 }
 
 type BustParticipant struct {
-	PlayerID string
-	Role     string
-	Position int
-	Tied     bool
+	PlayerID string `json:"player_id"`
+	Role     string `json:"role"`
+	Position int    `json:"position"`
+	Tied     bool   `json:"tied"`
+}
+
+// UnmarshalJSON accepts the original Go-field names as well as the stable snake_case audit keys.
+func (p *BustParticipant) UnmarshalJSON(data []byte) error {
+	var value struct {
+		PlayerID       string `json:"player_id"`
+		LegacyPlayerID string `json:"PlayerID"`
+		Role           string `json:"role"`
+		Position       int    `json:"position"`
+		Tied           bool   `json:"tied"`
+	}
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	p.PlayerID = value.PlayerID
+	if p.PlayerID == "" {
+		p.PlayerID = value.LegacyPlayerID
+	}
+	p.Role, p.Position, p.Tied = value.Role, value.Position, value.Tied
+	return nil
 }
 
 type Standing struct {
@@ -84,7 +104,7 @@ func (s *Service) RecordBust(ctx context.Context, request BustRequest, action Ac
 				return err
 			}
 		}
-		if err := pauseIfCurrentLevelUnavailable(ctx, tx, checkpoint, id, payload); err != nil {
+		if err := reconcileClockAfterStateChange(ctx, tx, checkpoint, id, payload); err != nil {
 			return err
 		}
 		return nil
@@ -174,10 +194,6 @@ func busteeIDs(bustees []Bustee) []string {
 	return ids
 }
 
-func pauseIfCurrentLevelUnavailable(ctx context.Context, tx *sql.Tx, checkpoint *store.Checkpoint, eventID int64, payload map[string]any) error {
-	return reconcileClockAfterStateChange(ctx, tx, checkpoint, eventID, payload)
-}
-
 // CorrectBustParticipant changes one participant without rewriting the original bust event.
 // A nil replacement removes only that participant; event validity and later dependencies are rechecked.
 func (s *Service) CorrectBustParticipant(ctx context.Context, bustEventID int64, originalPlayerID, originalRole string, replacement *BustParticipant, explanation string, action ActionContext) error {
@@ -216,17 +232,6 @@ func (s *Service) CorrectBustParticipant(ctx context.Context, bustEventID int64,
 		if voided.Valid {
 			return ErrBustAlreadyVoided
 		}
-		var participantVoided sql.NullInt64
-		if err := tx.QueryRowContext(ctx, `SELECT voided_by_event_id FROM bust_participants
-			WHERE event_id = ? AND player_id = ? AND role = ?`, bustEventID, originalPlayerID, originalRole).Scan(&participantVoided); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return ErrParticipantNotFound
-			}
-			return err
-		}
-		if participantVoided.Valid {
-			return fmt.Errorf("%w: participant already corrected", ErrParticipantNotFound)
-		}
 		participants, err := effectiveBustParticipants(ctx, tx, bustEventID)
 		if err != nil {
 			return err
@@ -241,9 +246,28 @@ func (s *Service) CorrectBustParticipant(ctx context.Context, bustEventID int64,
 		if err := validateHistoricalParticipants(ctx, tx, bustEventID, updated); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE bust_participants SET voided_by_event_id = ?
-			WHERE event_id = ? AND player_id = ? AND role = ?`, correctionEventID, bustEventID, originalPlayerID, originalRole); err != nil {
+		result, err := tx.ExecContext(ctx, `UPDATE bust_participants SET voided_by_event_id = ?
+			WHERE event_id = ? AND player_id = ? AND role = ? AND voided_by_event_id IS NULL`, correctionEventID, bustEventID, originalPlayerID, originalRole)
+		if err != nil {
 			return err
+		}
+		changed, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if changed == 0 {
+			result, err = tx.ExecContext(ctx, `UPDATE bust_participant_corrections SET voided_by_event_id = ?
+				WHERE bust_event_id = ? AND player_id = ? AND role = ? AND voided_by_event_id IS NULL`, correctionEventID, bustEventID, originalPlayerID, originalRole)
+			if err != nil {
+				return err
+			}
+			changed, err = result.RowsAffected()
+			if err != nil {
+				return err
+			}
+		}
+		if changed == 0 {
+			return ErrParticipantNotFound
 		}
 		var playerID, role any
 		var position, tied any
@@ -268,7 +292,7 @@ func (s *Service) CorrectBustParticipant(ctx context.Context, bustEventID int64,
 				return err
 			}
 		}
-		return pauseIfCurrentLevelUnavailable(ctx, tx, checkpoint, correctionEventID, payload)
+		return reconcileClockAfterStateChange(ctx, tx, checkpoint, correctionEventID, payload)
 	})
 	return err
 }
@@ -320,14 +344,29 @@ func validateEffectiveParticipants(participants []BustParticipant) error {
 	return validateBustRequest(request)
 }
 
+// EffectiveBustParticipants returns the current participants after all corrections.
+func (s *Service) EffectiveBustParticipants(ctx context.Context, bustEventID int64) ([]BustParticipant, error) {
+	var participants []BustParticipant
+	err := s.store.ViewTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		participants, err = effectiveBustParticipants(ctx, tx, bustEventID)
+		return err
+	})
+	return participants, err
+}
+
+const effectiveBustParticipantsQuery = `
+	SELECT bp.event_id, bp.player_id, bp.role, bp.finishing_order, bp.tied
+	FROM bust_participants bp JOIN busts b ON b.event_id = bp.event_id
+	WHERE bp.voided_by_event_id IS NULL AND b.voided_by_event_id IS NULL
+	UNION ALL
+	SELECT pc.bust_event_id, pc.player_id, pc.role, pc.finishing_order, pc.tied
+	FROM bust_participant_corrections pc JOIN busts b ON b.event_id = pc.bust_event_id
+	WHERE pc.voided_by_event_id IS NULL AND pc.player_id IS NOT NULL AND b.voided_by_event_id IS NULL`
+
 func effectiveBustParticipants(ctx context.Context, tx *sql.Tx, bustEventID int64) ([]BustParticipant, error) {
-	rows, err := tx.QueryContext(ctx, `
-		SELECT player_id, role, finishing_order, tied FROM bust_participants
-		WHERE event_id = ? AND voided_by_event_id IS NULL
-		UNION ALL
-		SELECT player_id, role, finishing_order, tied FROM bust_participant_corrections
-		WHERE bust_event_id = ? AND voided_by_event_id IS NULL AND player_id IS NOT NULL
-		ORDER BY role, finishing_order, player_id`, bustEventID, bustEventID)
+	rows, err := tx.QueryContext(ctx, `SELECT player_id, role, finishing_order, tied FROM (`+effectiveBustParticipantsQuery+`)
+		WHERE event_id = ? ORDER BY role, finishing_order, player_id`, bustEventID)
 	if err != nil {
 		return nil, err
 	}
@@ -405,7 +444,7 @@ func (s *Service) VoidBust(ctx context.Context, bustEventID int64, explanation s
 				return err
 			}
 		}
-		return pauseIfCurrentLevelUnavailable(ctx, tx, checkpoint, voidEventID, payload)
+		return reconcileClockAfterStateChange(ctx, tx, checkpoint, voidEventID, payload)
 	})
 	return err
 }
@@ -462,16 +501,8 @@ func (s *Service) CurrentStandings(ctx context.Context) (Standing, error) {
 			position int
 			tied     bool
 		}
-		rows, err = tx.QueryContext(ctx, `
-			SELECT event_id, player_id, finishing_order, tied FROM (
-				SELECT bp.event_id AS event_id, bp.player_id AS player_id, bp.finishing_order AS finishing_order, bp.tied AS tied
-				FROM bust_participants bp JOIN busts b ON b.event_id = bp.event_id
-				WHERE bp.role = 'bustee' AND bp.voided_by_event_id IS NULL AND b.voided_by_event_id IS NULL
-				UNION ALL
-				SELECT pc.bust_event_id AS event_id, pc.player_id AS player_id, pc.finishing_order AS finishing_order, pc.tied AS tied
-				FROM bust_participant_corrections pc JOIN busts b ON b.event_id = pc.bust_event_id
-				WHERE pc.role = 'bustee' AND pc.voided_by_event_id IS NULL AND pc.player_id IS NOT NULL AND b.voided_by_event_id IS NULL
-			) ORDER BY event_id DESC, finishing_order ASC, player_id ASC`)
+		rows, err = tx.QueryContext(ctx, `SELECT event_id, player_id, finishing_order, tied FROM (`+effectiveBustParticipantsQuery+`)
+			WHERE role = 'bustee' ORDER BY event_id DESC, finishing_order ASC, player_id ASC`)
 		if err != nil {
 			return err
 		}

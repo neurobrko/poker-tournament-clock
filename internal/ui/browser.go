@@ -1,4 +1,4 @@
-package tui
+package ui
 
 import (
 	"fmt"
@@ -66,7 +66,13 @@ func (b *fileBrowser) reload() error {
 			continue
 		}
 		path := filepath.Join(b.directory, name)
-		if item.IsDir() {
+		isDir := item.IsDir()
+		if !isDir && item.Type()&os.ModeSymlink != 0 {
+			if info, err := os.Stat(path); err == nil {
+				isDir = info.IsDir()
+			}
+		}
+		if isDir {
 			entries = append(entries, browserEntry{name: name + string(os.PathSeparator), path: path, dir: true, selectable: true})
 			continue
 		}

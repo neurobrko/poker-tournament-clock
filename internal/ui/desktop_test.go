@@ -1,4 +1,4 @@
-package tui
+package ui
 
 import (
 	"bytes"
@@ -20,6 +20,50 @@ import (
 	"git.mpx.sk/elvis/poker_clock/internal/store"
 	"git.mpx.sk/elvis/poker_clock/internal/tournament"
 )
+
+func TestAddOnLabelRemainsOpenAfterRegistrationCloses(t *testing.T) {
+	app := test.NewApp()
+	defer app.Quit()
+	window := app.NewWindow("test")
+	window.Resize(fyne.NewSize(1280, 800))
+	model, database, _ := newRunningModel(t)
+	defer database.Close()
+	template, err := config.DefaultTemplate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	model.screen = screenMain
+	model.record.Config = template
+	model.record.StartedAt = &started
+	model.record.Status = store.StatusRunning
+	model.record.RegistrationClosed = true
+	model.record.Checkpoint.SegmentIndex = 4
+	d := newTestDesktop(app, window, model)
+	d.render(true)
+	addon := d.home.actions['a']
+	if addon == nil || addon.Disabled() || strings.Contains(addon.Text, "CLOSED") {
+		t.Fatalf("independent add-on window shown closed: button=%+v", addon)
+	}
+}
+
+func TestDesktopNameValidationBlocksSubmission(t *testing.T) {
+	app := test.NewApp()
+	defer app.Quit()
+	window := app.NewWindow("test")
+	model := NewModel()
+	desktop := newTestDesktop(app, window, model)
+	desktop.render(true)
+	desktop.activate('n')
+	desktop.entry.SetText(strings.Repeat("x", store.MaxNameLength+1))
+	if err := desktop.entry.Validate(); err == nil {
+		t.Fatal("overlong tournament name passed validator")
+	}
+	desktop.entry.OnSubmitted(desktop.entry.Text)
+	if model.pendingName != "" || model.modal == nil || model.modal.textPurpose != textTournamentName {
+		t.Fatalf("invalid name submitted: pending=%q modal=%+v", model.pendingName, model.modal)
+	}
+}
 
 func TestDesktopStartupAndNewTournamentFlow(t *testing.T) {
 	app := test.NewApp()
@@ -131,8 +175,8 @@ func TestDesktopMainViewHasDisabledFutureActionsAndLargeClock(t *testing.T) {
 	if contentHeight, viewportHeight := d.home.leftScroll.Content.MinSize().Height, d.home.leftScroll.Size().Height; contentHeight > viewportHeight {
 		t.Fatalf("four-payout fullscreen column should fit without scrolling: content %v > viewport %v", contentHeight, viewportHeight)
 	}
-	if !d.home.actions['h'].Disabled() || !d.home.actions['t'].Disabled() {
-		t.Fatal("future-stage hand resolver and timeline actions must stay disabled")
+	if d.home.actions['h'] != nil || d.home.actions['t'] != nil {
+		t.Fatal("unimplemented hand resolver and timeline actions should be hidden")
 	}
 	if d.home.actions[' '].Disabled() {
 		t.Fatal("clock start action unexpectedly disabled before tournament starts")
@@ -550,9 +594,6 @@ func TestDesktopStatusAndNextBreakTypography(t *testing.T) {
 	if got := desktopStatus(model, &template.Schedule[0]); got != "LEVEL 1 RUNNING" {
 		t.Fatalf("level status = %q, want uppercase level and state", got)
 	}
-	if got := desktopNextBreak(model, 12000); !strings.HasPrefix(got, "NEXT BREAK ") || strings.Contains(got, "NEXT BREAK  ") || !strings.Contains(got, "AVG. STACK") {
-		t.Fatalf("next-break label typography = %q", got)
-	}
 	white := Spacedust.Foreground
 	parts := desktopNextBreakParts(model, 12000, nil)
 	if len(parts) != 5 || parts[0].color != Spacedust.Blue || parts[1].color != white || parts[3].color != Spacedust.Blue || parts[4].color != white {
@@ -564,8 +605,8 @@ func TestDesktopStatusAndNextBreakTypography(t *testing.T) {
 	}
 	model.record.Config.Schedule = []config.Segment{{Kind: config.SegmentLevel}}
 	model.record.Checkpoint.SegmentIndex = 0
-	if got := desktopNextBreak(model, 12000); got != "" {
-		t.Fatalf("next-break line without a configured break = %q", got)
+	if parts := desktopNextBreakParts(model, 12000, nil); len(parts) != 0 {
+		t.Fatalf("next-break parts without configured break = %+v", parts)
 	}
 }
 

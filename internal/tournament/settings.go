@@ -58,7 +58,9 @@ func (s *Service) UpdateConfiguration(ctx context.Context, next config.Template,
 		if wall.IsZero() {
 			wall = time.Now()
 		}
-		_, err := tx.ExecContext(ctx, "UPDATE tournament SET configuration_json = ?, updated_at = ? WHERE id = 1", string(configJSON), store.FormatWallTime(wall))
+		_, err := tx.ExecContext(ctx, `UPDATE tournament SET configuration_json = ?, updated_at = ?,
+			remaining_ns = CASE WHEN segment_index = 0 THEN ? ELSE remaining_ns END WHERE id = 1`,
+			string(configJSON), store.FormatWallTime(wall), int64(next.Schedule[0].Duration.Value()))
 		return err
 	})
 	return err

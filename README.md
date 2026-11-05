@@ -13,7 +13,7 @@ A desktop GUI for running self-hosted Texas Hold’em tournaments. The applicati
 
 Get the latest standalone binaries from [GitHub Releases](https://github.com/neurobrko/poker-tournament-clock/releases). Choose the file matching your OS and CPU: `poker-clock-linux-amd64`, `poker-clock-linux-arm64`, `poker-clock-darwin-amd64`, `poker-clock-darwin-arm64`, `poker-clock-windows-amd64.exe`, or `poker-clock-windows-arm64.exe`.
 
-On Linux and macOS, make the downloaded binary executable before launching it (for example, `chmod +x poker-clock-linux-amd64`). Linux also needs runtime OpenGL/X11 libraries. Releases are raw executables, not installers; they are currently unsigned and macOS builds are not notarized, so the OS may show a security warning.
+On Linux and macOS, make the downloaded binary executable before launching it (for example, `chmod +x poker-clock-linux-amd64`). Linux also needs runtime OpenGL/X11 libraries. Releases are raw executables, not installers; they are currently unsigned and macOS builds are not notarized, so the OS may show a security warning. Windows startup/shutdown errors are appended to `%APPDATA%/poker-clock/errors.log`.
 
 ## Run
 
@@ -28,7 +28,7 @@ go build -trimpath -o poker-clock ./cmd/poker-clock
 ./poker-clock
 ```
 
-The app opens fullscreen by default. Resize the window freely or use **F11** (also available as bottom-right button) to toggle fullscreen. Tournament state appears beneath the clock. The dark Spacedust-inspired palette and embedded Ubuntu Sans, Sans Mono, and Condensed fonts work offline; clocks use Mono and footer notices use Condensed. Colors and typography live in `internal/tui/desktop_theme.go` and can be changed centrally. Startup offers **New tournament**, **Load tournament**, and **Quit**. Use on-screen controls or keyboard shortcuts. New tournaments can use the embedded default or import YAML; choose a destination folder and enter a new database filename. Existing files are visible but never overwritten. **Load tournament** lists SQLite databases; to use YAML, choose **New tournament → Browse YAML template**.
+The app opens fullscreen by default. Resize the window freely or use **F11** (also available as bottom-right button) to toggle fullscreen. Tournament state appears beneath the clock. The dark Spacedust-inspired palette and embedded Ubuntu Sans, Sans Mono, and Condensed fonts work offline; clocks use Mono and footer notices use Condensed. Colors and typography live in `internal/ui/desktop_theme.go` and can be changed centrally. Startup offers **New tournament**, **Load tournament**, and **Quit**. Use on-screen controls or keyboard shortcuts. New tournaments can use the embedded default or import YAML; choose a destination folder and enter a new database filename. Existing files are visible but never overwritten. **Load tournament** lists SQLite databases; to use YAML, choose **New tournament → Browse YAML template**.
 
 A normal Linux desktop build links Fyne's OpenGL/X11 driver. Headless CI/tests use Fyne's software driver with `-tags ci`.
 
@@ -44,14 +44,13 @@ Template schema and rules are documented in [`docs/configuration.md`](docs/confi
 | --- | --- |
 | `Space` | Start (with settings-lock confirmation), pause, or resume |
 | `B` / `R` / `A` | Buy-in / rebuy / add-on |
-| `P` | Add, view player purchase/bust history, rename/remove a player, or void a purchase |
+| `P` | Add, view player purchase/bust history, rename/remove a player, or void a purchase (history only after ending) |
 | `O` | Sit out or return an active player |
 | `L` | Select a configured level or break (confirmation required); optionally set remaining time |
 | `X` | Record a bust, void a bust event, or correct one participant |
 | `S` | Import/export settings, rename tournament, choose sound file, reopen ended tournament |
 | `N` | Toggle sound on/off |
-| `H` | Hand resolver (disabled; later stage) |
-| `T` | Player timeline (disabled; later stage) |
+| `F` | View latest completed standings and saved player payouts |
 | `?` | Texas Hold’em tournament rules reference |
 | `E` | End tournament; incomplete endings require an explanation |
 | `Q` | Confirm exit; running clock pauses and saves before exit |
@@ -68,7 +67,7 @@ Audit events preserve local timestamps with UTC offsets and, after start, elapse
 
 The app makes a best-effort attempt to inhibit system sleep and display blanking while a tournament is open, including when paused. It uses `systemd-inhibit` plus X11 `xset` where available on Linux, `caffeinate` on macOS, and Windows execution-state requests. Desktop environments may ignore or lack these mechanisms; the app reports unavailable inhibition. A wall/monotonic clock comparison pauses at the last saved checkpoint if sleep is detected.
 
-Transition sound is enabled by default and saved in the user's OS configuration directory, outside tournament settings. The GUI embeds separate MP3s for level changes and the one-minute warning; choosing a custom WAV/MP3 overrides the level-change sound. If playback is unavailable, the GUI keeps the visual notice and does not emit a terminal bell.
+Transition sound is enabled by default and saved in the user's OS configuration directory, outside tournament settings. The GUI embeds separate MP3s for level changes and the one-minute warning; choosing a custom WAV/MP3 overrides the level-change sound. On Linux, MP3 playback needs `ffplay`, `mpv`, or `mpg123`; playback failures appear in the GUI status area, and the visual notice remains.
 
 ## Build and test
 
@@ -85,4 +84,4 @@ The hooks format Go files, run `go test -tags ci ./...`, and run `go vet -tags c
 ./scripts/build-native.sh
 ```
 
-This writes `dist/poker-clock-<os>-<arch>` (for example, `dist/poker-clock-linux-amd64`; Windows binaries end in `.exe`). Fyne's desktop driver uses CGO and native graphics libraries, so build on each target OS with its native toolchain. GitHub Actions runs checks on GitHub pushes and pull requests; pushing a `v*` tag there builds binaries for Linux, macOS, and Windows (amd64 and arm64) and publishes a GitHub Release. See [release instructions](docs/releasing.md) before tagging. Gitea pull request events do not trigger GitHub Actions, and release builds require Actions and hosted-runner access for the full matrix. Sound availability depends on the system audio backend.
+This writes `dist/poker-clock-<os>-<arch>` (for example, `dist/poker-clock-linux-amd64`; Windows binaries end in `.exe`). Fyne's desktop driver uses CGO and native graphics libraries, so build on each target OS with its native toolchain. GitHub Actions runs checks and a native Linux build on pushes and pull requests; pull requests also compile the supported OS/architecture matrix. Pushing a `v*` tag builds the same matrix and publishes a GitHub Release. See [release instructions](docs/releasing.md) before tagging. Gitea pull request events do not trigger GitHub Actions. Sound availability depends on the system audio backend.

@@ -166,7 +166,7 @@ func (s *Service) Buy(ctx context.Context, playerID string, kind PurchaseKind, a
 			if active == 0 {
 				return ErrPlayerNotActive
 			}
-			if !inAddOnBreak(current, segmentIndex, segmentFinished != 0) {
+			if !AddOnWindowOpen(current, segmentIndex, segmentFinished != 0) {
 				return ErrAddOnWindowClosed
 			}
 			var existing int64
@@ -245,7 +245,8 @@ func registrationOpen(template config.Template, segmentIndex int, segmentFinishe
 	return segmentIndex < targetIndex
 }
 
-func inAddOnBreak(template config.Template, segmentIndex int, segmentFinished bool) bool {
+// AddOnWindowOpen reports whether the configured add-on break is currently active.
+func AddOnWindowOpen(template config.Template, segmentIndex int, segmentFinished bool) bool {
 	if segmentIndex < 1 || segmentFinished {
 		return false
 	}
@@ -567,6 +568,10 @@ func replayPlayerStateThrough(ctx context.Context, tx *sql.Tx, playerID string, 
 			if !active {
 				active = true
 				sittingOut = false
+			}
+		case string(PurchaseAddOn):
+			if !hasInitialBuyIn || !active {
+				dependencies = append(dependencies, item.name)
 			}
 		case "buster":
 			if !active {

@@ -1,4 +1,4 @@
-// Package sound plays nonblocking tournament notifications with a terminal-bell fallback.
+// Package sound plays nonblocking tournament notifications.
 package sound
 
 import (
@@ -11,46 +11,30 @@ import (
 	"strings"
 )
 
-//go:embed level-change.wav
-var bundledWAV []byte
-
 //go:embed level-change.mp3
 var bundledLevelMP3 []byte
 
 //go:embed minute-before-level.mp3
 var bundledMinuteMP3 []byte
 
-// Play starts sound playback asynchronously. It never waits for the audio backend.
-// An empty path selects the embedded WAV; an invalid or unsupported sound falls back to the terminal bell.
-func Play(path string, enabled bool) error {
-	return play(path, enabled, bundledWAV, ".wav", bell)
+// PlayDesktop plays a configured or bundled MP3 asynchronously. Playback failures are reported without blocking the UI.
+func PlayDesktop(path string, enabled bool, onError func(error)) error {
+	return play(path, enabled, bundledLevelMP3, ".mp3", onError)
 }
 
-// PlayDesktop plays the configured sound or embedded MP3 level-change sound without
-// writing a terminal bell. GUI callers surface playback failures through their status line.
-func PlayDesktop(path string, enabled bool) error {
-	return play(path, enabled, bundledLevelMP3, ".mp3", nil)
+// PlayMinuteWarningDesktop plays the configured or bundled warning asynchronously.
+func PlayMinuteWarningDesktop(path string, enabled bool, onError func(error)) error {
+	return play(path, enabled, bundledMinuteMP3, ".mp3", onError)
 }
 
-// PlayMinuteWarningDesktop plays the configured one-minute warning or bundled sound without a terminal bell.
-func PlayMinuteWarningDesktop(path string, enabled bool) error {
-	return play(path, enabled, bundledMinuteMP3, ".mp3", nil)
-}
-
-func play(path string, enabled bool, defaultAudio []byte, defaultExtension string, fallback func()) error {
+func play(path string, enabled bool, defaultAudio []byte, defaultExtension string, onError func(error)) error {
 	if !enabled {
 		return nil
-	}
-	beep := func() {
-		if fallback != nil {
-			fallback()
-		}
 	}
 	cleanup := func() {}
 	if path == "" {
 		temporary, err := os.CreateTemp("", "poker-clock-*"+defaultExtension)
 		if err != nil {
-			beep()
 			return fmt.Errorf("create bundled notification sound: %w", err)
 		}
 		name := temporary.Name()
@@ -58,27 +42,22 @@ func play(path string, enabled bool, defaultAudio []byte, defaultExtension strin
 		if _, err := temporary.Write(defaultAudio); err != nil {
 			_ = temporary.Close()
 			cleanup()
-			beep()
 			return fmt.Errorf("write bundled notification sound: %w", err)
 		}
 		if err := temporary.Close(); err != nil {
 			cleanup()
-			beep()
 			return fmt.Errorf("close bundled notification sound: %w", err)
 		}
 		path = name
 	} else if ext := strings.ToLower(filepath.Ext(path)); ext != ".wav" && ext != ".mp3" {
-		beep()
 		return fmt.Errorf("sound file must be WAV or MP3")
 	} else if _, err := os.Stat(path); err != nil {
-		beep()
 		return fmt.Errorf("open selected sound file: %w", err)
 	}
 
 	command, args, err := playerCommand(path)
 	if err != nil {
 		cleanup()
-		beep()
 		return err
 	}
 	cmd := exec.Command(command, args...)
@@ -86,12 +65,11 @@ func play(path string, enabled bool, defaultAudio []byte, defaultExtension strin
 	cmd.Stderr = nil
 	if err := cmd.Start(); err != nil {
 		cleanup()
-		beep()
 		return fmt.Errorf("start sound playback: %w", err)
 	}
 	go func() {
-		if err := cmd.Wait(); err != nil {
-			beep()
+		if err := cmd.Wait(); err != nil && onError != nil {
+			onError(fmt.Errorf("sound playback failed: %w", err))
 		}
 		cleanup()
 	}()
@@ -125,7 +103,7 @@ func playerCommand(path string) (string, []string, error) {
 				args []string
 			}{"powershell.exe", []string{"-NoProfile", "-NonInteractive", "-Command", "(New-Object System.Media.SoundPlayer -ArgumentList '" + quoted + "').PlaySync()"}})
 		} else {
-			player := "$p = New-Object -ComObject WMPlayer.OCX; $p.URL = '" + quoted + "'; $p.controls.play(); while ($p.playState -ne 1) { Start-Sleep -Milliseconds 100 }; $p.close()"
+			player := "$p = New-Object -ComObject WMPlayer.OCX; $p.URL = '" + quoted + "'; $p.controls.play(); $sw = [Diagnostics.Stopwatch]::StartNew(); while ($p.playState -ne 3 -and $sw.Elapsed.TotalSeconds -lt 5) { Start-Sleep -Milliseconds 100 }; if ($p.playState -ne 3) { $p.close(); exit 1 }; $sw.Restart(); while ($p.playState -eq 3 -and $sw.Elapsed.TotalMinutes -lt 2) { Start-Sleep -Milliseconds 100 }; if ($p.playState -eq 3) { $p.close(); exit 1 }; $p.close()"
 			candidates = append(candidates, struct {
 				name string
 				args []string
@@ -171,5 +149,3 @@ func playerCommand(path string) (string, []string, error) {
 	}
 	return "", nil, fmt.Errorf("no supported sound player is available")
 }
-
-func bell() { _, _ = fmt.Fprint(os.Stderr, "\a") }
