@@ -96,6 +96,18 @@ func TestDesktopStartupAndNewTournamentFlow(t *testing.T) {
 	}
 }
 
+func TestFooterPlacesVersionBetweenTimeAndFullscreenButton(t *testing.T) {
+	objects := []fyne.CanvasObject{widget.NewLabel(""), widget.NewLabel("12:34:56"), widget.NewLabel("v0.0.1"), widget.NewButton("⛶  F11", nil)}
+	bottomFooterLayout{}.Layout(objects, fyne.NewSize(500, 40))
+	message, localTime, version, fullscreen := objects[0], objects[1], objects[2], objects[3]
+	if localTime.Position().X+localTime.Size().Width > version.Position().X || version.Position().X+version.Size().Width > fullscreen.Position().X {
+		t.Fatal("footer version must appear after the time and before F11")
+	}
+	if message.Size().Width == 0 {
+		t.Fatal("footer notice lost all available width")
+	}
+}
+
 func TestDesktopWelcomeKeyboardNavigationAndShortcuts(t *testing.T) {
 	app := test.NewApp()
 	defer app.Quit()

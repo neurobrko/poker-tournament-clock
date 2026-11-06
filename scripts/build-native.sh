@@ -12,5 +12,6 @@ os="$(go env GOOS)"
 arch="$(go env GOARCH)"
 suffix=""
 if [ "$os" = "windows" ]; then suffix=".exe"; fi
-printf 'Building native Fyne desktop app for %s/%s\n' "$os" "$arch"
-GOTOOLCHAIN="${GOTOOLCHAIN:-local}" go build -trimpath -o "dist/poker-clock-${os}-${arch}${suffix}" ./cmd/poker-clock
+version="${VERSION:-$(git describe --tags --always --dirty 2>/dev/null || printf dev)}"
+printf 'Building native Fyne desktop app for %s/%s (%s)\n' "$os" "$arch" "$version"
+GOTOOLCHAIN="${GOTOOLCHAIN:-local}" go build -trimpath -ldflags="-X=git.mpx.sk/elvis/poker_clock/internal/ui.BuildVersion=${version}" -o "dist/poker-clock-${os}-${arch}${suffix}" ./cmd/poker-clock

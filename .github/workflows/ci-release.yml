@@ -58,6 +58,7 @@ jobs:
       CGO_ENABLED: '1'
       GOOS: ${{ matrix.goos }}
       GOARCH: ${{ matrix.goarch }}
+      VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'dev' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -90,7 +91,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          go build -trimpath -o "dist/poker-clock-${GOOS}-${GOARCH}" ./cmd/poker-clock
+          go build -trimpath -ldflags="-X=git.mpx.sk/elvis/poker_clock/internal/ui.BuildVersion=${VERSION}" -o "dist/poker-clock-${GOOS}-${GOARCH}" ./cmd/poker-clock
       - name: Build Windows binary
         if: matrix.goos == 'windows'
         shell: pwsh
@@ -99,7 +100,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
           $output = "dist/poker-clock-$($env:GOOS)-$($env:GOARCH).exe"
-          go build -trimpath -ldflags="-H=windowsgui" -o $output ./cmd/poker-clock
+          go build -trimpath -ldflags="-H=windowsgui -X=git.mpx.sk/elvis/poker_clock/internal/ui.BuildVersion=$env:VERSION" -o $output ./cmd/poker-clock
       - uses: actions/upload-artifact@v4
         with:
           name: poker-clock-${{ matrix.goos }}-${{ matrix.goarch }}

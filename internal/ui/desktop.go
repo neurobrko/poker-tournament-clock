@@ -10,6 +10,9 @@ import (
 	"fyne.io/fyne/v2/widget"
 )
 
+// BuildVersion is set from the release tag when building release binaries.
+var BuildVersion = "dev"
+
 // RunDesktop launches the Fyne desktop UI. The tournament model and persistence
 // workflows remain shared with the existing tested application logic.
 func RunDesktop(application fyne.App) error {

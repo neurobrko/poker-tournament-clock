@@ -43,6 +43,7 @@ type desktopHome struct {
 	nextLevel         *coloredLine
 	nextBreak         *coloredLine
 	localTime         *widget.Label
+	version           *widget.Label
 	fullscreen        *widget.Button
 	actions           map[rune]*widget.Button
 }
@@ -57,8 +58,8 @@ func (d *desktop) mainView() (fyne.CanvasObject, *desktopHome) {
 		chipUpReminder: canvas.NewText("", Spacedust.Red), reminder: canvas.NewText("", Spacedust.Yellow),
 		message: widget.NewLabel(""), nextLevel: newColoredLine(2, 21, 16),
 		nextBreak: newColoredLine(5, 21, 16),
-		localTime: widget.NewLabel(""),
-		actions:   make(map[rune]*widget.Button),
+		localTime: widget.NewLabel(""), version: widget.NewLabel(BuildVersion),
+		actions: make(map[rune]*widget.Button),
 	}
 	h.title = canvas.NewText("", Spacedust.Accent)
 	h.title.Alignment = fyne.TextAlignCenter
@@ -73,10 +74,11 @@ func (d *desktop) mainView() (fyne.CanvasObject, *desktopHome) {
 	h.fullscreen = d.fullscreenButton()
 	h.localTime.Alignment = fyne.TextAlignTrailing
 	h.localTime.TextStyle = fyne.TextStyle{Monospace: true}
+	h.version.TextStyle = fyne.TextStyle{Monospace: true}
 	h.message.Wrapping = fyne.TextWrapOff
 	h.message.Truncation = fyne.TextTruncateEllipsis
 	footerMessage := container.NewThemeOverride(h.message, newCondensedTheme())
-	footerLine := container.New(bottomFooterLayout{}, footerMessage, h.localTime, h.fullscreen)
+	footerLine := container.New(bottomFooterLayout{}, footerMessage, h.localTime, h.version, h.fullscreen)
 	footer := container.NewPadded(footerLine)
 	main := container.NewBorder(header, footer, left, right, container.NewPadded(center))
 	h.refresh(d.model)
@@ -408,8 +410,8 @@ func (h *desktopHome) updateActions(m *Model) {
 }
 
 func (d *desktop) startupView() fyne.CanvasObject {
-	title := canvas.NewText("POKER CLOCK", Spacedust.Accent)
-	title.TextSize = 48
+	title := canvas.NewText("Poker Tournament Clock", Spacedust.Accent)
+	title.TextSize = 40
 	title.TextStyle = fyne.TextStyle{Bold: true}
 	title.Alignment = fyne.TextAlignCenter
 	subtitle := canvas.NewText("A quieter way to run tournament night", Spacedust.Muted)
@@ -428,7 +430,10 @@ func (d *desktop) startupView() fyne.CanvasObject {
 		}
 	}
 	buttons := container.NewGridWithColumns(3, newTournament, loadTournament, quit)
-	body := container.NewVBox(container.NewCenter(title), container.NewCenter(subtitle), layout.NewSpacer(), buttons, layout.NewSpacer(), d.statusNotice())
+	footer := canvas.NewText("MIT Licence · Marek Paulik · elvis@elvis.sk · github.com/neurobrko/poker-tournament-clock", Spacedust.Muted)
+	footer.TextSize = 12
+	footer.Alignment = fyne.TextAlignCenter
+	body := container.NewVBox(container.NewCenter(title), container.NewCenter(subtitle), layout.NewSpacer(), buttons, layout.NewSpacer(), d.statusNotice(), container.NewCenter(footer))
 	return container.NewCenter(container.NewGridWrap(fyne.NewSize(820, 400), softCard("Welcome", body)))
 }
 
@@ -931,20 +936,20 @@ func (r *coloredLineRenderer) Destroy()                     {}
 type bottomFooterLayout struct{}
 
 func (bottomFooterLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
-	if len(objects) < 3 {
+	if len(objects) < 4 {
 		return fyne.NewSize(0, 0)
 	}
-	messageSize, timeSize, buttonSize := objects[0].MinSize(), objects[1].MinSize(), objects[2].MinSize()
-	height := fyne.Max(messageSize.Height, fyne.Max(timeSize.Height, buttonSize.Height))
-	return fyne.NewSize(160+timeSize.Width+buttonSize.Width+16, height)
+	messageSize, timeSize, versionSize, buttonSize := objects[0].MinSize(), objects[1].MinSize(), objects[2].MinSize(), objects[3].MinSize()
+	height := fyne.Max(messageSize.Height, fyne.Max(timeSize.Height, fyne.Max(versionSize.Height, buttonSize.Height)))
+	return fyne.NewSize(160+timeSize.Width+versionSize.Width+buttonSize.Width+24, height)
 }
 func (bottomFooterLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
-	if len(objects) < 3 {
+	if len(objects) < 4 {
 		return
 	}
-	message, localTime, fullscreen := objects[0], objects[1], objects[2]
-	timeSize, buttonSize := localTime.MinSize(), fullscreen.MinSize()
-	messageWidth := size.Width - timeSize.Width - buttonSize.Width - 16
+	message, localTime, version, fullscreen := objects[0], objects[1], objects[2], objects[3]
+	timeSize, versionSize, buttonSize := localTime.MinSize(), version.MinSize(), fullscreen.MinSize()
+	messageWidth := size.Width - timeSize.Width - versionSize.Width - buttonSize.Width - 24
 	if messageWidth < 0 {
 		messageWidth = 0
 	}
@@ -952,6 +957,8 @@ func (bottomFooterLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
 	message.Resize(fyne.NewSize(messageWidth, size.Height))
 	localTime.Move(fyne.NewPos(messageWidth+8, (size.Height-timeSize.Height)/2))
 	localTime.Resize(timeSize)
+	version.Move(fyne.NewPos(messageWidth+16+timeSize.Width, (size.Height-versionSize.Height)/2))
+	version.Resize(versionSize)
 	fullscreen.Move(fyne.NewPos(size.Width-buttonSize.Width, (size.Height-buttonSize.Height)/2))
 	fullscreen.Resize(buttonSize)
 }
