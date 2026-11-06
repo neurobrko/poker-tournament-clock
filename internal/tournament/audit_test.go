@@ -167,7 +167,7 @@ func TestTournamentAndPlayerNamesEnforceDisplayedLimit(t *testing.T) {
 	if _, err := service.RegisterPlayer(ctx, strings.Repeat("x", store.MaxNameLength+1), false, ActionContext{}); err == nil {
 		t.Fatal("player name exceeding UI limit accepted")
 	}
-	if err := database.RenameTournament(ctx, strings.Repeat("x", store.MaxNameLength+1), time.Now()); err == nil {
+	if err := database.RenameTournament(ctx, strings.Repeat("x", store.MaxNameLength+1), time.Now(), nil); err == nil {
 		t.Fatal("tournament name exceeding UI limit accepted")
 	}
 }

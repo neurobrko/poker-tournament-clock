@@ -36,6 +36,7 @@ const (
 	menuTemplate
 	menuPlayers
 	menuSettings
+	menuSoundSettings
 	menuBusts
 	selectPurchase
 	selectInfo
@@ -115,10 +116,12 @@ type dialog struct {
 	bustLabels      []string
 	participants    []bustParticipantOption
 	tiedIDs         map[string]bool
+	returnTo        *dialog
 }
 
 type bustParticipantOption struct {
 	BustEventID int64
+	BustNumber  int
 	PlayerID    string
 	Role        string
 	Position    int
@@ -328,6 +331,8 @@ func (m *Model) chooseMenu(d *dialog) {
 		}
 	case menuSettings:
 		m.chooseSettings(d.cursor)
+	case menuSoundSettings:
+		m.chooseSoundSettings(d.cursor)
 	case menuBusts:
 		m.chooseBusts(d.cursor)
 	}
@@ -340,16 +345,26 @@ func (m *Model) chooseSettings(index int) {
 	case 1:
 		m.startBrowser(browseTemplate, screenMain)
 	case 2:
-		if m.record.Status != store.StatusNotStarted {
-			m.showMessage("Settings locked", store.ErrConfigurationLocked.Error())
-			return
-		}
 		m.modal = &dialog{kind: dialogText, title: "Rename tournament", prompt: "Tournament name", input: m.record.Name, textPurpose: textTournamentNameRename}
 	case 3:
+		m.modal = &dialog{kind: dialogMenu, purpose: menuSoundSettings, title: "Sound settings", choices: []string{
+			"Choose end-of-level sound", "Choose one-minute warning sound",
+			"Use default end-of-level sound", "Use default one-minute warning sound",
+		}}
+	default:
+		if index == 4 && m.record.Status == store.StatusEnded {
+			m.modal = &dialog{kind: dialogText, title: "Reopen tournament", prompt: "Explanation (required, max 200 chars)", textPurpose: textReopenExplanation}
+		}
+	}
+}
+
+func (m *Model) chooseSoundSettings(index int) {
+	switch index {
+	case 0:
 		m.startBrowser(browseLevelSound, screenMain)
-	case 4:
+	case 1:
 		m.startBrowser(browseMinuteSound, screenMain)
-	case 5:
+	case 2:
 		m.prefs.SoundFile = ""
 		if err := preferences.Save(m.prefs); err != nil {
 			m.showMessage("Sound preference failed", err.Error())
@@ -357,7 +372,7 @@ func (m *Model) chooseSettings(index int) {
 		}
 		m.modal = nil
 		m.setStatus("Using default end-of-level sound.", false)
-	case 6:
+	case 3:
 		m.prefs.MinuteSoundFile = ""
 		if err := preferences.Save(m.prefs); err != nil {
 			m.showMessage("Sound preference failed", err.Error())
@@ -365,10 +380,6 @@ func (m *Model) chooseSettings(index int) {
 		}
 		m.modal = nil
 		m.setStatus("Using default one-minute warning sound.", false)
-	default:
-		if index == 7 && m.record.Status == store.StatusEnded {
-			m.modal = &dialog{kind: dialogText, title: "Reopen tournament", prompt: "Explanation (required, max 200 chars)", textPurpose: textReopenExplanation}
-		}
 	}
 }
 
@@ -380,7 +391,7 @@ func (m *Model) chooseBusts(index int) {
 			m.showMessage("Record bust", "At least two active players are needed.")
 			return
 		}
-		m.modal = &dialog{kind: dialogMultiPlayers, purpose: selectBuster, title: "Select active buster(s)", players: players, selected: make(map[string]bool)}
+		m.modal = &dialog{kind: dialogMultiPlayers, purpose: selectBuster, title: "Select buster(s) · all receive credit", players: players, selected: make(map[string]bool)}
 	case 1:
 		m.openBustEvents(selectVoidBust)
 	case 2:
@@ -509,6 +520,9 @@ func (m *Model) choosePlayer(d *dialog, player tournament.Player) {
 	switch d.purpose {
 	case selectInfo:
 		m.showPlayerHistory(player)
+		if m.modal != nil && m.modal.kind == dialogMessage {
+			m.modal.returnTo = d
+		}
 	case selectPurchase:
 		_, err := m.service.Buy(context.Background(), player.ID, d.purchaseKind, m.actionContext())
 		if err != nil {
@@ -576,13 +590,20 @@ func (m *Model) handleMultiPlayerDialog(key keyEvent, d *dialog) bool {
 	case keyEnter:
 		m.advanceBustSelection(d)
 	case keyRunes:
-		if strings.EqualFold(key.String(), "t") && d.purpose == selectBustee && d.cursor >= 0 && d.cursor < len(d.players) {
+		if d.purpose == selectBustee && d.cursor >= 0 && d.cursor < len(d.players) {
 			id := d.players[d.cursor].ID
-			if d.selected[id] {
-				if d.tiedIDs == nil {
-					d.tiedIDs = make(map[string]bool)
+			switch key.String() {
+			case "[":
+				d.selectedOrder = reorderBustees(d.selectedOrder, d.tiedIDs, id, -1)
+			case "]":
+				d.selectedOrder = reorderBustees(d.selectedOrder, d.tiedIDs, id, 1)
+			default:
+				if strings.EqualFold(key.String(), "t") && d.selected[id] {
+					if d.tiedIDs == nil {
+						d.tiedIDs = make(map[string]bool)
+					}
+					d.tiedIDs[id] = !d.tiedIDs[id]
 				}
-				d.tiedIDs[id] = !d.tiedIDs[id]
 			}
 		}
 	}
@@ -609,7 +630,7 @@ func (m *Model) advanceBustSelection(d *dialog) {
 			m.setStatus("At least one buster must not be among the bustees.", true)
 			return
 		}
-		m.modal = &dialog{kind: dialogMultiPlayers, purpose: selectBustee, title: "Select bustee(s) in finishing order", players: players, selected: make(map[string]bool), busters: append([]string(nil), d.selectedOrder...), tiedIDs: make(map[string]bool)}
+		m.modal = &dialog{kind: dialogMultiPlayers, purpose: selectBustee, title: "Bustee order: lowest to highest · [ ] reorder · T ties adjacent", players: players, selected: make(map[string]bool), busters: append([]string(nil), d.selectedOrder...), tiedIDs: make(map[string]bool)}
 		return
 	}
 	busters := append([]string(nil), d.busters...)
@@ -624,9 +645,51 @@ func (m *Model) advanceBustSelection(d *dialog) {
 	m.setStatus("Bust event recorded.", false)
 }
 
-func buildBustees(order []string, tied map[string]bool) []tournament.Bustee {
-	result := make([]tournament.Bustee, 0, len(order))
-	position := 1
+func reorderBustees(order []string, tied map[string]bool, playerID string, direction int) []string {
+	index := -1
+	for i, id := range order {
+		if id == playerID {
+			index = i
+			break
+		}
+	}
+	if index < 0 || direction == 0 {
+		return order
+	}
+	start, end := busteeTieBounds(order, tied, index)
+	if direction < 0 {
+		if start == 0 {
+			return order
+		}
+		previousStart, _ := busteeTieBounds(order, tied, start-1)
+		result := append([]string(nil), order[:previousStart]...)
+		result = append(result, order[start:end]...)
+		result = append(result, order[previousStart:start]...)
+		return append(result, order[end:]...)
+	}
+	if end == len(order) {
+		return order
+	}
+	_, nextEnd := busteeTieBounds(order, tied, end)
+	result := append([]string(nil), order[:start]...)
+	result = append(result, order[end:nextEnd]...)
+	result = append(result, order[start:end]...)
+	return append(result, order[nextEnd:]...)
+}
+
+func busteeTieBounds(order []string, tied map[string]bool, index int) (start, end int) {
+	start, end = index, index+1
+	for start > 0 && tied[order[start]] && tied[order[start-1]] {
+		start--
+	}
+	for end < len(order) && tied[order[end-1]] && tied[order[end]] {
+		end++
+	}
+	return start, end
+}
+
+func busteeGroups(order []string, tied map[string]bool) [][]string {
+	var groups [][]string
 	for index := 0; index < len(order); {
 		end := index + 1
 		if tied[order[index]] {
@@ -634,17 +697,43 @@ func buildBustees(order []string, tied map[string]bool) []tournament.Bustee {
 				end++
 			}
 		}
-		if end-index > 1 {
-			for _, id := range order[index:end] {
-				result = append(result, tournament.Bustee{PlayerID: id, Position: position, Tied: true})
-			}
-			position++
-			index = end
-			continue
+		groups = append(groups, order[index:end])
+		index = end
+	}
+	return groups
+}
+
+func busteeFinishingLabels(activeBefore int, order []string, tied map[string]bool) map[string]string {
+	groups := busteeGroups(order, tied)
+	place := activeBefore - len(order) + 1
+	if place < 1 {
+		place = 1
+	}
+	labels := make(map[string]string, len(order))
+	for index := len(groups) - 1; index >= 0; index-- {
+		group := groups[index]
+		last := place + len(group) - 1
+		label := finishRange(place, last)
+		if len(group) > 1 {
+			label += " (tie)"
 		}
-		result = append(result, tournament.Bustee{PlayerID: order[index], Position: position})
-		position++
-		index++
+		for _, id := range group {
+			labels[id] = label
+		}
+		place = last + 1
+	}
+	return labels
+}
+
+func buildBustees(order []string, tied map[string]bool) []tournament.Bustee {
+	groups := busteeGroups(order, tied)
+	result := make([]tournament.Bustee, 0, len(order))
+	position := len(groups)
+	for _, group := range groups { // Input order is lowest-to-highest; stored positions are best-to-worst.
+		for _, id := range group {
+			result = append(result, tournament.Bustee{PlayerID: id, Position: position, Tied: len(group) > 1})
+		}
+		position--
 	}
 	return result
 }
@@ -804,6 +893,7 @@ func (m *Model) openBustEvents(purpose dialogPurpose) {
 		m.showMessage("Bust history failed", err.Error())
 		return
 	}
+	bustNumbers := bustNumbersByEventID(events)
 	voided := make(map[int64]bool)
 	for _, event := range events {
 		if event.Kind == "bust_voided" && event.VoidEventID != nil {
@@ -821,16 +911,20 @@ func (m *Model) openBustEvents(purpose dialogPurpose) {
 			m.showMessage("Bust history unavailable", err.Error())
 			return
 		}
-		busters, bustees := 0, 0
+		var busters, bustees []string
 		for _, participant := range participants {
+			name := participant.PlayerID
+			if player, ok := m.playerByID(participant.PlayerID); ok {
+				name = player.Name
+			}
 			if participant.Role == "buster" {
-				busters++
+				busters = append(busters, name)
 			} else if participant.Role == "bustee" {
-				bustees++
+				bustees = append(bustees, name)
 			}
 		}
 		bustEvents = append(bustEvents, event.ID)
-		labels = append(labels, fmt.Sprintf("Bust #%d · %d buster(s), %d bustee(s) · %s", event.ID, busters, bustees, event.WallTime.Format("15:04:05")))
+		labels = append(labels, fmt.Sprintf("Bust #%d · %s · %s · %s", bustNumbers[event.ID], namedParticipants("Buster", busters), namedParticipants("Bustee", bustees), event.WallTime.Format("15:04:05")))
 	}
 	if len(bustEvents) == 0 {
 		m.showMessage("Bust history", "No valid bust events.")
@@ -839,12 +933,25 @@ func (m *Model) openBustEvents(purpose dialogPurpose) {
 	m.modal = &dialog{kind: dialogSelectBust, purpose: purpose, title: "Select bust event", bustEvents: bustEvents, bustLabels: labels}
 }
 
+func namedParticipants(role string, names []string) string {
+	if len(names) != 1 {
+		role += "s"
+	}
+	return role + ": " + strings.Join(names, ", ")
+}
+
 func (m *Model) showParticipantPicker(bustID int64) {
+	events, err := m.database.Events(context.Background())
+	if err != nil {
+		m.showMessage("Bust participants unavailable", err.Error())
+		return
+	}
+	bustNumber := bustNumbersByEventID(events)[bustID]
 	effective, err := m.service.EffectiveBustParticipants(context.Background(), bustID)
 	participants := make([]bustParticipantOption, 0, len(effective))
 	for _, participant := range effective {
 		participants = append(participants, bustParticipantOption{
-			BustEventID: bustID, PlayerID: participant.PlayerID, Role: participant.Role,
+			BustEventID: bustID, BustNumber: bustNumber, PlayerID: participant.PlayerID, Role: participant.Role,
 			Position: participant.Position, Tied: participant.Tied,
 		})
 	}
@@ -956,6 +1063,10 @@ func (m *Model) playerByID(id string) (tournament.Player, bool) {
 }
 
 func (m *Model) closeDialog() {
+	if m.modal != nil && m.modal.returnTo != nil {
+		m.modal = m.modal.returnTo
+		return
+	}
 	m.modal = nil
 	if m.suspendedModal != nil {
 		m.modal, m.suspendedModal = m.suspendedModal, nil
@@ -971,6 +1082,7 @@ func (m *Model) openBustParticipants() {
 		m.showMessage("Bust participants unavailable", err.Error())
 		return
 	}
+	bustNumbers := bustNumbersByEventID(events)
 	voided := make(map[int64]bool)
 	for _, event := range events {
 		if event.Kind == "bust_voided" && event.VoidEventID != nil {
@@ -989,7 +1101,7 @@ func (m *Model) openBustParticipants() {
 		}
 		for _, participant := range effective {
 			participants = append(participants, bustParticipantOption{
-				BustEventID: event.ID, PlayerID: participant.PlayerID, Role: participant.Role,
+				BustEventID: event.ID, BustNumber: bustNumbers[event.ID], PlayerID: participant.PlayerID, Role: participant.Role,
 				Position: participant.Position, Tied: participant.Tied,
 			})
 		}
@@ -1088,11 +1200,7 @@ func (m *Model) showFinalResults() {
 
 func (m *Model) renameTournament(name string) {
 	action := m.actionContext()
-	if action.Checkpoint != nil {
-		m.showMessage("Rename failed", store.ErrConfigurationLocked.Error())
-		return
-	}
-	if err := m.database.RenameTournament(context.Background(), name, action.WallTime); err != nil {
+	if err := m.database.RenameTournament(context.Background(), name, action.WallTime, action.Checkpoint); err != nil {
 		m.showMessage("Rename failed", err.Error())
 		return
 	}

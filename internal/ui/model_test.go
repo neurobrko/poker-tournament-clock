@@ -15,6 +15,18 @@ import (
 	"git.mpx.sk/elvis/poker_clock/internal/tournament"
 )
 
+func TestChipUpAndReminderAreKeptOnSeparateLines(t *testing.T) {
+	segment := config.Segment{Kind: config.SegmentBreak, ChipUp: 25, Reminder: "Registration closes soon"}
+	chipUp, reminder := segmentReminderLines(segment)
+	if chipUp != "Chip up! (25)" || reminder != "Registration closes soon" {
+		t.Fatalf("break message lines = %q / %q", chipUp, reminder)
+	}
+	transition := transitionNotice([]domain.Transition{{Kind: domain.TransitionBreakStarted, ToIndex: 1}}, []config.Segment{segment})
+	if !strings.Contains(transition, "Chip up! (25)\nRegistration closes soon") {
+		t.Fatalf("transition notice did not put reminder on next line: %q", transition)
+	}
+}
+
 func TestTransitionNoticeIncludesBreakReminder(t *testing.T) {
 	schedule := []config.Segment{{Kind: config.SegmentLevel}, {Kind: config.SegmentBreak, Reminder: "Chip up the 5-value chip."}}
 	notice := transitionNotice([]domain.Transition{{Kind: domain.TransitionBreakStarted, ToIndex: 2}}, schedule)
@@ -77,6 +89,76 @@ func TestAddOnClosedWarningAndEligiblePlayers(t *testing.T) {
 	}
 }
 
+func TestBustParticipantNamesPluralizeOnlyForMultiplePlayers(t *testing.T) {
+	if got := namedParticipants("Buster", []string{"Alice"}); got != "Buster: Alice" {
+		t.Fatalf("singular participant label = %q", got)
+	}
+	if got := namedParticipants("Bustee", []string{"Bob", "Carol"}); got != "Bustees: Bob, Carol" {
+		t.Fatalf("plural participant label = %q", got)
+	}
+}
+
+func TestClosedRebuyWarnsBeforeOpeningPlayerPicker(t *testing.T) {
+	model := NewModel()
+	template, err := config.DefaultTemplate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	model.record.Config = template
+	model.record.RegistrationClosed = true
+	model.players = []tournament.Player{{ID: "busted", Name: "Busted", HasInitialBuyIn: true}}
+	model.openPurchase(tournament.PurchaseRebuy)
+	if model.modal == nil || model.modal.kind != dialogMessage || model.modal.title != "Rebuy unavailable" || !strings.Contains(model.modal.message, "Rebuys are closed") {
+		t.Fatalf("closed rebuy did not warn immediately: %+v", model.modal)
+	}
+}
+
+func TestTournamentCanBeRenamedWhileRunning(t *testing.T) {
+	model, database, _ := newRunningModel(t)
+	defer database.Close()
+	model.openSettings()
+	model.chooseSettings(2)
+	if model.modal == nil || model.modal.textPurpose != textTournamentNameRename {
+		t.Fatalf("running settings did not allow tournament rename: %+v", model.modal)
+	}
+	model.modal.input = "Saturday final table"
+	model.submitText(model.modal)
+	if model.record.Name != "Saturday final table" {
+		t.Fatalf("running tournament name = %q", model.record.Name)
+	}
+	if model.modal != nil {
+		t.Fatalf("rename unexpectedly showed an error: %+v", model.modal)
+	}
+	events, err := database.Events(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, event := range events {
+		found = found || event.Kind == "tournament_renamed"
+	}
+	if !found {
+		t.Fatal("running rename was not audited")
+	}
+}
+
+func TestYamlImportAfterStartShowsConfigurationLockNotCheckpointError(t *testing.T) {
+	model, database, _ := newRunningModel(t)
+	defer database.Close()
+	data, err := config.DefaultYAML()
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "template.yaml")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	model.saveTemplateImport(path)
+	if model.modal == nil || model.modal.kind != dialogMessage || !strings.Contains(strings.ToLower(model.modal.message), "configuration is locked") || strings.Contains(strings.ToLower(model.modal.message), "atomic clock checkpoint") {
+		t.Fatalf("started YAML import returned misleading error: %+v", model.modal)
+	}
+}
+
 func TestLevelSelectorHomeAndEndKeys(t *testing.T) {
 	template, err := config.DefaultTemplate()
 	if err != nil {
@@ -129,6 +211,66 @@ func TestPrestartBreakCountdownDoesNotDoubleCountOpeningLevel(t *testing.T) {
 	}
 	if got := model.nextBreakLabel(); !strings.HasSuffix(got, " in "+formatDuration(want)) {
 		t.Fatalf("next break = %q, want duration %s", got, formatDuration(want))
+	}
+}
+
+func TestPlayerHistoryRanksAfterRebuyClosureAndIncludesFinalPrize(t *testing.T) {
+	model, database, service := newRunningModel(t)
+	defer database.Close()
+	ctx := context.Background()
+	players, err := service.Players(ctx, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	busted := players[1]
+	record := mustModelTournament(t, database)
+	request := tournament.BustRequest{Busters: []string{players[0].ID}, Bustees: []tournament.Bustee{{PlayerID: busted.ID, Position: 1}}}
+	if _, err := service.RecordBust(ctx, request, tournament.ActionContext{Checkpoint: &record.Checkpoint}); err != nil {
+		t.Fatal(err)
+	}
+	record = mustModelTournament(t, database)
+	if _, err := service.Buy(ctx, busted.ID, tournament.PurchaseRebuy, tournament.ActionContext{Checkpoint: &record.Checkpoint}); err != nil {
+		t.Fatal(err)
+	}
+	record = mustModelTournament(t, database)
+	if _, err := service.RecordBust(ctx, request, tournament.ActionContext{Checkpoint: &record.Checkpoint}); err != nil {
+		t.Fatal(err)
+	}
+	model.refresh()
+	busted, _ = model.playerByID(busted.ID)
+	model.showPlayerHistory(busted)
+	if strings.Contains(model.modal.message, "RANKING") || strings.Contains(model.modal.message, "2nd place") || !strings.Contains(model.modal.message, "Busted in bust #2") {
+		t.Fatalf("history assigned a premature rank while rebuys were open: %s", model.modal.message)
+	}
+	if model.record.Status != store.StatusRunning {
+		t.Fatalf("tournament paused before rebuys closed: %s", model.record.Status)
+	}
+	model.modal = nil
+
+	record = mustModelTournament(t, database)
+	if _, err := service.SelectSegment(ctx, 5, nil, tournament.ActionContext{Checkpoint: &record.Checkpoint}); err != nil {
+		t.Fatal(err)
+	}
+	model.refresh()
+	if model.record.Status != store.StatusPaused || model.modal == nil || model.modal.confirm != confirmCompletedEnd {
+		t.Fatalf("settled winner did not auto-pause and request finalization: status=%s modal=%+v", model.record.Status, model.modal)
+	}
+	model.onKey(keyEvent{Type: keyEsc}) // Operator can postpone finalization; the clock stays paused.
+	busted, _ = model.playerByID(busted.ID)
+	model.showPlayerHistory(busted)
+	if !strings.Contains(model.modal.message, "RANKING\n  • 2nd place") || strings.Contains(model.modal.message, "Provisional") {
+		t.Fatalf("post-closure bust ranking missing: %s", model.modal.message)
+	}
+
+	record = mustModelTournament(t, database)
+	if _, err := service.EndTournament(ctx, "", nil, tournament.ActionContext{Checkpoint: &record.Checkpoint}); err != nil {
+		t.Fatal(err)
+	}
+	model.refresh()
+	busted, _ = model.playerByID(busted.ID)
+	model.showPlayerHistory(busted)
+	if !strings.Contains(model.modal.message, "Final result · 2nd place · prize 1.80 €") {
+		t.Fatalf("final ranking/prize missing from history: %s", model.modal.message)
 	}
 }
 
@@ -219,7 +361,7 @@ func TestFinalResultsAndCorrectedPlayerHistoryUseStoredParticipants(t *testing.T
 		t.Fatalf("replacement player history lacks current bust/correction: %s", model.modal.message)
 	}
 	model.showPlayerHistory(players[1])
-	if !strings.Contains(model.modal.message, "Corrected out") || strings.Contains(model.modal.message, "Busted ·") {
+	if !strings.Contains(model.modal.message, "Corrected out") || strings.Contains(model.modal.message, "Busted in bust") {
 		t.Fatalf("superseded player history still reports bust: %s", model.modal.message)
 	}
 
@@ -231,7 +373,8 @@ func TestFinalResultsAndCorrectedPlayerHistoryUseStoredParticipants(t *testing.T
 		t.Fatal(err)
 	}
 	checkpoint := mustModelTournament(t, db2).Checkpoint
-	if _, err := service2.RecordBust(ctx, tournament.BustRequest{Busters: []string{contestants[0].ID}, Bustees: []tournament.Bustee{{PlayerID: contestants[1].ID, Position: 1}}}, tournament.ActionContext{Checkpoint: &checkpoint}); err != nil {
+	finalBustID, err := service2.RecordBust(ctx, tournament.BustRequest{Busters: []string{contestants[0].ID}, Bustees: []tournament.Bustee{{PlayerID: contestants[1].ID, Position: 1}}}, tournament.ActionContext{Checkpoint: &checkpoint})
+	if err != nil {
 		t.Fatal(err)
 	}
 	checkpoint = mustModelTournament(t, db2).Checkpoint
@@ -242,6 +385,52 @@ func TestFinalResultsAndCorrectedPlayerHistoryUseStoredParticipants(t *testing.T
 	model2.showFinalResults()
 	if !strings.Contains(model2.modal.message, contestants[0].Name) || !strings.Contains(model2.modal.message, "Payouts") || !strings.Contains(model2.modal.message, "2.80 €") {
 		t.Fatalf("final results view missing stored player payout: %s", model2.modal.message)
+	}
+	winnerLabels := playerDialogLabels(model2, &dialog{players: model2.players})
+	if !strings.Contains(strings.Join(winnerLabels, "\n"), contestants[0].Name+" · winner") {
+		t.Fatalf("completed tournament player list did not identify winner: %v", winnerLabels)
+	}
+	model2.showPlayerHistory(contestants[0])
+	if !strings.Contains(model2.modal.message, "Final result · 1st place · prize 2.80 €") {
+		t.Fatalf("completed winner history missing final result/payout: %s", model2.modal.message)
+	}
+
+	if err := service2.ReopenTournament(ctx, "correct final bust", tournament.ActionContext{}); err != nil {
+		t.Fatal(err)
+	}
+	checkpoint = mustModelTournament(t, db2).Checkpoint
+	if err := service2.VoidBust(ctx, finalBustID, "final bust was recorded incorrectly", tournament.ActionContext{Checkpoint: &checkpoint}); err != nil {
+		t.Fatal(err)
+	}
+	model2.refresh()
+	model2.showPlayerHistory(contestants[0])
+	if strings.Contains(model2.modal.message, "RANKING") || strings.Contains(model2.modal.message, "Final result") || strings.Contains(model2.modal.message, "prize 2.80 €") {
+		t.Fatalf("voided final bust left stale winner/rank/prize in history: %s", model2.modal.message)
+	}
+}
+
+func TestVoidBustPickerShowsSequentialBustNumberNotAuditID(t *testing.T) {
+	model, database, service := newRunningModel(t)
+	defer database.Close()
+	players, err := service.Players(context.Background(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := mustModelTournament(t, database)
+	bustID, err := service.RecordBust(context.Background(), tournament.BustRequest{
+		Busters: []string{players[0].ID}, Bustees: []tournament.Bustee{{PlayerID: players[1].ID, Position: 1}},
+	}, tournament.ActionContext{Checkpoint: &record.Checkpoint})
+	if err != nil {
+		t.Fatal(err)
+	}
+	model.refresh()
+	model.openBustEvents(selectVoidBust)
+	if model.modal == nil || len(model.modal.bustLabels) != 1 || !strings.HasPrefix(model.modal.bustLabels[0], "Bust #1 ") || strings.Contains(model.modal.bustLabels[0], fmt.Sprintf("#%d", bustID)) || !strings.Contains(model.modal.bustLabels[0], "Buster: "+players[0].Name) || !strings.Contains(model.modal.bustLabels[0], "Bustee: "+players[1].Name) {
+		t.Fatalf("void bust label uses audit ID instead of sequence number: %+v", model.modal)
+	}
+	model.showParticipantPicker(bustID)
+	if model.modal == nil || len(model.modal.participants) == 0 || model.modal.participants[0].BustNumber != 1 {
+		t.Fatalf("participant correction did not retain bust sequence number: %+v", model.modal)
 	}
 }
 

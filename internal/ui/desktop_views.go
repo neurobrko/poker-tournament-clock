@@ -17,30 +17,34 @@ import (
 )
 
 type desktopHome struct {
-	title         *canvas.Text
-	entrants      *widget.Label
-	active        *widget.Label
-	sittingOut    *widget.Label
-	busts         *widget.Label
-	buyIns        *widget.Label
-	rebuys        *widget.Label
-	addOns        *widget.Label
-	totalStack    *widget.Label
-	averageStack  *widget.Label
-	prizePool     *widget.Label
-	prizeRows     *fyne.Container
-	prizeKey      string
-	leftScroll    *container.Scroll
-	blinds        *fitText
-	timer         *fitText
-	status        *fitText
-	breakReminder *canvas.Text
-	message       *widget.Label
-	nextLevel     *coloredLine
-	nextBreak     *coloredLine
-	localTime     *widget.Label
-	fullscreen    *widget.Button
-	actions       map[rune]*widget.Button
+	title             *canvas.Text
+	entrants          *widget.Label
+	active            *widget.Label
+	sittingOut        *widget.Label
+	busts             *widget.Label
+	buyIns            *widget.Label
+	rebuys            *widget.Label
+	addOns            *widget.Label
+	totalStack        *widget.Label
+	averageStack      *widget.Label
+	prizePool         *widget.Label
+	prizeRows         *fyne.Container
+	prizeKey          string
+	chipLegendView    *fyne.Container
+	chipValues        []config.ChipValue
+	chipLegendSegment int
+	leftScroll        *container.Scroll
+	blinds            *fitText
+	timer             *fitText
+	status            *fitText
+	chipUpReminder    *canvas.Text
+	reminder          *canvas.Text
+	message           *widget.Label
+	nextLevel         *coloredLine
+	nextBreak         *coloredLine
+	localTime         *widget.Label
+	fullscreen        *widget.Button
+	actions           map[rune]*widget.Button
 }
 
 func (d *desktop) mainView() (fyne.CanvasObject, *desktopHome) {
@@ -49,7 +53,8 @@ func (d *desktop) mainView() (fyne.CanvasObject, *desktopHome) {
 		buyIns: widget.NewLabel(""), rebuys: widget.NewLabel(""), addOns: widget.NewLabel(""),
 		totalStack: widget.NewLabel(""), averageStack: widget.NewLabel(""), prizePool: widget.NewLabel(""),
 		prizeRows: container.New(layout.NewCustomPaddedVBoxLayout(0)), timer: newFitText("", Spacedust.Foreground, 460, true),
-		status: newFitText("", Spacedust.Green, 64, true), breakReminder: canvas.NewText("", Spacedust.Yellow),
+		status:         newFitText("", Spacedust.Green, 64, true),
+		chipUpReminder: canvas.NewText("", Spacedust.Red), reminder: canvas.NewText("", Spacedust.Yellow),
 		message: widget.NewLabel(""), nextLevel: newColoredLine(2, 21, 16),
 		nextBreak: newColoredLine(5, 21, 16),
 		localTime: widget.NewLabel(""),
@@ -99,7 +104,10 @@ func (h *desktopHome) leftColumn(chipValues []config.ChipValue) fyne.CanvasObjec
 		compactSection("Prizes", h.prizeRows),
 	}
 	if len(chipValues) > 0 {
-		sectionItems = append(sectionItems, compactSectionWithSpacing("Chips", chipLegend(chipValues), 8))
+		h.chipValues = append([]config.ChipValue(nil), chipValues...)
+		h.chipLegendView = chipLegend(chipValues, nil)
+		h.chipLegendSegment = -1
+		sectionItems = append(sectionItems, compactSectionWithSpacing("Chips", h.chipLegendView, 8))
 	}
 	sections := container.New(layout.NewCustomPaddedVBoxLayout(4), sectionItems...)
 	h.leftScroll = container.NewScroll(sections)
@@ -119,9 +127,12 @@ func (h *desktopHome) clockColumn() fyne.CanvasObject {
 	h.status.minSize = 24
 	h.status.preferred = fyne.NewSize(220, 64)
 	h.status.text.TextStyle = fyne.TextStyle{Bold: true}
-	h.breakReminder.Alignment = fyne.TextAlignCenter
-	h.breakReminder.TextSize = 18
-	h.breakReminder.TextStyle = fyne.TextStyle{Bold: true}
+	h.chipUpReminder.Alignment = fyne.TextAlignCenter
+	h.chipUpReminder.TextSize = 18
+	h.chipUpReminder.TextStyle = fyne.TextStyle{Bold: true}
+	h.reminder.Alignment = fyne.TextAlignCenter
+	h.reminder.TextSize = 18
+	h.reminder.TextStyle = fyne.TextStyle{Bold: true}
 	h.message.Wrapping = fyne.TextWrapWord
 
 	current := container.NewVBox(blindsTitle, h.blinds)
@@ -131,7 +142,8 @@ func (h *desktopHome) clockColumn() fyne.CanvasObject {
 		container.NewMax(h.status),
 		container.NewMax(h.nextBreak),
 		container.NewMax(h.nextLevel),
-		container.NewCenter(h.breakReminder),
+		container.NewCenter(h.chipUpReminder),
+		container.NewCenter(h.reminder),
 	)
 	clock = container.NewBorder(nil, clockFooter, nil, nil, clock)
 	content := container.NewBorder(current, nil, nil, nil, clock)
@@ -201,7 +213,14 @@ func (h *desktopHome) refresh(m *Model) {
 	h.rebuys.SetText(formatPurchaseCount(m.summary.Rebuys, m.summary.RebuyCents, m.record.Config.Purchases.Rebuy.Price))
 	h.addOns.SetText(formatPurchaseCount(m.summary.AddOns, m.summary.AddOnCents, m.record.Config.Purchases.AddOn.Price))
 	h.totalStack.SetText(formatDisplayChips(m.summary.TotalStack))
-	h.averageStack.SetText(formatDisplayChips(roundedAverageStack(m.summary.AverageStack, m.record.Config.ChipValues)))
+	remainingChips, removedChips := chipsAfterChipUps(m.record.Config.ChipValues, m.record.Config.Schedule, m.record.Checkpoint.SegmentIndex)
+	h.averageStack.SetText(formatDisplayChips(roundedAverageStack(m.summary.AverageStack, remainingChips)))
+	if h.chipLegendView != nil && h.chipLegendSegment != m.record.Checkpoint.SegmentIndex {
+		updated := chipLegend(h.chipValues, removedChips)
+		h.chipLegendView.Objects = updated.Objects
+		h.chipLegendView.Refresh()
+		h.chipLegendSegment = m.record.Checkpoint.SegmentIndex
+	}
 	h.prizePool.SetText(m.summary.PrizePoolCents.String())
 
 	completed := m.record.Status == store.StatusEnded && m.record.ResultCompleted != nil && *m.record.ResultCompleted
@@ -230,17 +249,24 @@ func (h *desktopHome) refresh(m *Model) {
 	}
 
 	segment := currentDesktopSegment(m)
-	reminder := ""
-	if segment != nil && segment.Kind == config.SegmentBreak && !m.record.Checkpoint.SegmentFinished {
-		reminder = formatChipUpReminder(segment.Reminder)
+	chipUp, reminder := "", ""
+	if segment != nil && !m.record.Checkpoint.SegmentFinished {
+		chipUp, reminder = segmentReminderLines(*segment)
 	}
-	h.breakReminder.Text = reminder
-	if reminder == "" {
-		h.breakReminder.Hide()
+	h.chipUpReminder.Text = chipUp
+	if chipUp == "" {
+		h.chipUpReminder.Hide()
 	} else {
-		h.breakReminder.Show()
+		h.chipUpReminder.Show()
 	}
-	h.breakReminder.Refresh()
+	h.chipUpReminder.Refresh()
+	h.reminder.Text = reminder
+	if reminder == "" {
+		h.reminder.Hide()
+	} else {
+		h.reminder.Show()
+	}
+	h.reminder.Refresh()
 	if segment == nil {
 		h.blinds.setText("— / — / —")
 	} else if segment.Kind == config.SegmentBreak && !m.record.Checkpoint.SegmentFinished {
@@ -476,14 +502,18 @@ func roundedAverageStack(average int64, chips []config.ChipValue) int64 {
 
 func desktopNextBreakParts(m *Model, averageStack int64, status *fitText) []coloredLinePart {
 	label := m.nextBreakLabel()
+	remainingChips, _ := chipsAfterChipUps(m.record.Config.ChipValues, m.record.Config.Schedule, m.record.Checkpoint.SegmentIndex)
+	averageStack = roundedAverageStack(averageStack, remainingChips)
+	white := Spacedust.Foreground
 	if strings.EqualFold(label, "none configured") {
-		return nil
+		return []coloredLinePart{
+			{text: "AVG. STACK", color: Spacedust.Blue, bold: true},
+			{text: formatDisplayChips(averageStack), color: white, bold: true, fontSource: status, spaceBefore: true},
+		}
 	}
 	if index := strings.LastIndex(label, " in "); index >= 0 {
 		label = strings.TrimSpace(label[index+4:])
 	}
-	white := Spacedust.Foreground
-	averageStack = roundedAverageStack(averageStack, m.record.Config.ChipValues)
 	return []coloredLinePart{
 		{text: "NEXT BREAK", color: Spacedust.Blue, bold: true},
 		{text: label, color: white, bold: true, fontSource: status, monospace: true, spaceBefore: true},
@@ -525,7 +555,12 @@ func desktopNextBlinds(m *Model) string {
 
 func desktopStatus(m *Model, segment *config.Segment) string {
 	if segment != nil && segment.Kind == config.SegmentBreak && !m.record.Checkpoint.SegmentFinished && m.record.Status != store.StatusEnded {
-		label := fmt.Sprintf("BREAK %d", currentBreakNumber(m))
+		label := strings.TrimSpace(segment.Label)
+		if label == "" {
+			label = fmt.Sprintf("BREAK %d", currentBreakNumber(m))
+		} else {
+			label = strings.ToUpper(label)
+		}
 		if m.record.Status == store.StatusPaused {
 			return label + " PAUSED"
 		}
@@ -652,17 +687,20 @@ func compactSectionWithSpacing(title string, content fyne.CanvasObject, spacing 
 	return container.New(layout.NewCustomPaddedVBoxLayout(spacing), heading, content)
 }
 
-func chipLegend(values []config.ChipValue) fyne.CanvasObject {
+func chipLegend(values []config.ChipValue, removed map[int64]bool) *fyne.Container {
 	tokens := make([]fyne.CanvasObject, 0, len(values))
 	for _, chip := range values {
 		fill, err := config.ParseChipColor(chip.Color)
 		if err != nil {
 			continue
 		}
+		if removed[chip.Value] {
+			fill = color.NRGBA{R: 0x77, G: 0x77, B: 0x77, A: 0xff}
+		}
 		tokens = append(tokens, newChipToken(formatDisplayChips(chip.Value), fill))
 	}
 	if len(tokens) == 0 {
-		return mutedLabel("No chip values")
+		return container.NewVBox(mutedLabel("No chip values"))
 	}
 	rows := make([]fyne.CanvasObject, 0, (len(tokens)+2)/3)
 	for start := 0; start < len(tokens); start += 3 {
@@ -671,6 +709,22 @@ func chipLegend(values []config.ChipValue) fyne.CanvasObject {
 		rows = append(rows, container.NewCenter(row))
 	}
 	return container.NewVBox(rows...)
+}
+
+func chipsAfterChipUps(chips []config.ChipValue, schedule []config.Segment, throughSegment int) ([]config.ChipValue, map[int64]bool) {
+	removed := make(map[int64]bool)
+	for index, segment := range schedule {
+		if index+1 <= throughSegment && segment.Kind == config.SegmentBreak && segment.ChipUp > 0 {
+			removed[segment.ChipUp] = true
+		}
+	}
+	remaining := make([]config.ChipValue, 0, len(chips))
+	for _, chip := range chips {
+		if !removed[chip.Value] {
+			remaining = append(remaining, chip)
+		}
+	}
+	return remaining, removed
 }
 
 type chipToken struct {

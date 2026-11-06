@@ -168,6 +168,7 @@ type Segment struct {
 	BigBlind   int64       `yaml:"big_blind,omitempty"`
 	Ante       AnteConfig  `yaml:"ante,omitempty"`
 	Reminder   string      `yaml:"reminder,omitempty"`
+	ChipUp     int64       `yaml:"chipup,omitempty" json:"chipup,omitempty"`
 }
 
 type AnteKind string
@@ -349,6 +350,9 @@ func (t Template) validateSchedule() error {
 		switch segment.Kind {
 		case SegmentLevel:
 			levels++
+			if segment.ChipUp != 0 {
+				return fmt.Errorf("%s cannot define chipup; chipup is only valid on breaks", where)
+			}
 			if segment.SmallBlind <= 0 || segment.BigBlind <= segment.SmallBlind {
 				return fmt.Errorf("%s requires positive blinds with big blind greater than small blind", where)
 			}
@@ -357,6 +361,18 @@ func (t Template) validateSchedule() error {
 			}
 		case SegmentBreak:
 			breaks++
+			if segment.ChipUp < 0 {
+				return fmt.Errorf("%s chipup must be positive", where)
+			}
+			if segment.ChipUp > 0 && len(t.ChipValues) > 0 {
+				found := false
+				for _, chip := range t.ChipValues {
+					found = found || chip.Value == segment.ChipUp
+				}
+				if !found {
+					return fmt.Errorf("%s chipup %d is not in chip_values", where, segment.ChipUp)
+				}
+			}
 			if i == 0 || previous == SegmentBreak {
 				return fmt.Errorf("%s must follow a blind level", where)
 			}

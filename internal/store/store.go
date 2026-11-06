@@ -464,8 +464,8 @@ func (s *Store) recoverOnOpen(ctx context.Context) error {
 	return nil
 }
 
-// RenameTournament changes the tournament name only before play starts and audits the change.
-func (s *Store) RenameTournament(ctx context.Context, name string, at time.Time) error {
+// RenameTournament changes the tournament name and audits it alongside any active clock checkpoint.
+func (s *Store) RenameTournament(ctx context.Context, name string, at time.Time, checkpoint *Checkpoint) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return fmt.Errorf("tournament name is required")
@@ -477,33 +477,24 @@ func (s *Store) RenameTournament(ctx context.Context, name string, at time.Time)
 		at = time.Now()
 	}
 	payload := map[string]string{"name": name}
-	_, err := s.CommitEvent(ctx, EventInput{Kind: "tournament_renamed", Payload: payload, WallTime: at}, nil,
-		func(tx *sql.Tx, _ int64) error {
-			result, err := tx.ExecContext(ctx, `UPDATE tournament SET name = ?, updated_at = ? WHERE id = 1 AND status = ?`, name, FormatWallTime(at), StatusNotStarted)
-			if err != nil {
-				return err
-			}
-			return requirePrestartUpdate(ctx, tx, result)
-		})
+	event := EventInput{Kind: "tournament_renamed", Payload: payload, WallTime: at}
+	if checkpoint != nil {
+		event.ClockElapsed = &checkpoint.ClockElapsed
+		event.RealElapsed = &checkpoint.RealElapsed
+	}
+	_, err := s.CommitEvent(ctx, event, checkpoint, func(tx *sql.Tx, _ int64) error {
+		var status TournamentStatus
+		var started sql.NullString
+		if err := tx.QueryRowContext(ctx, "SELECT status, started_at FROM tournament WHERE id = 1").Scan(&status, &started); err != nil {
+			return err
+		}
+		if status == StatusEnded || started.Valid != (checkpoint != nil) || !started.Valid && status != StatusNotStarted {
+			return ErrConfigurationLocked
+		}
+		_, err := tx.ExecContext(ctx, `UPDATE tournament SET name = ?, updated_at = ? WHERE id = 1`, name, FormatWallTime(at))
+		return err
+	})
 	return err
-}
-
-func requirePrestartUpdate(ctx context.Context, tx *sql.Tx, result sql.Result) error {
-	changed, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if changed == 1 {
-		return nil
-	}
-	var status TournamentStatus
-	if err := tx.QueryRowContext(ctx, "SELECT status FROM tournament WHERE id = 1").Scan(&status); err != nil {
-		return err
-	}
-	if status != StatusNotStarted {
-		return ErrConfigurationLocked
-	}
-	return ErrNotTournamentDatabase
 }
 
 // ViewTx runs a read-only transaction for consistent domain queries.

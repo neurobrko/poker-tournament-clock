@@ -135,6 +135,7 @@ func (m *Model) processClockDelta(delta, wallDelta time.Duration, wall time.Time
 	if !m.refreshClock() {
 		return clockAdvanced
 	}
+	m.maybePromptFinalization()
 	if warnMinute && m.record.Status == store.StatusRunning && m.record.Checkpoint.SegmentIndex == warningSegment && m.record.Checkpoint.Remaining > 0 && m.record.Checkpoint.Remaining <= time.Minute+time.Second {
 		if soundErr := sound.PlayMinuteWarningDesktop(m.prefs.MinuteSoundFile, m.prefs.SoundEnabled, m.onAsyncError); soundErr != nil {
 			m.setStatus(soundErr, true)
@@ -265,6 +266,29 @@ func (m *Model) refresh() {
 	}
 	_, finalErr := m.service.LatestFinalResult(context.Background())
 	m.finalResultAvailable = finalErr == nil
+	m.maybePromptFinalization()
+}
+
+func (m *Model) maybePromptFinalization() {
+	if m.service == nil || m.modal != nil || m.record.Status != store.StatusRunning || !m.record.RegistrationClosed || m.summary.ActivePlayers != 1 {
+		return
+	}
+	checkpoint := m.record.Checkpoint
+	if !checkpoint.Running {
+		return
+	}
+	if err := m.service.PauseTournament(context.Background(), tournament.ActionContext{WallTime: time.Now(), Checkpoint: &checkpoint}); err != nil {
+		m.setStatus(err, true)
+		return
+	}
+	if !m.refreshClock() {
+		return
+	}
+	m.modal = &dialog{
+		kind: dialogConfirm, title: "Finalize tournament?",
+		message: "Rebuys are closed and one active player remains. Clock paused; confirm to save the winner and prize results.",
+		confirm: confirmCompletedEnd,
+	}
 }
 
 func (m *Model) openTournament(database *store.Store) {
@@ -625,12 +649,28 @@ func (m *Model) defaultFilename() string {
 }
 
 func (m *Model) openPurchase(kind tournament.PurchaseKind) {
-	if kind == tournament.PurchaseAddOn {
+	closed := m.record.RegistrationClosed || m.record.Status == store.StatusEnded
+	switch kind {
+	case tournament.PurchaseInitialBuyIn:
+		if closed {
+			m.showMessage("Purchase unavailable", tournament.ErrInitialBuyInClosed.Error())
+			return
+		}
+	case tournament.PurchaseRebuy:
+		if !m.record.Config.Registration.RebuysEnabled {
+			m.showMessage("Rebuy unavailable", tournament.ErrRebuysDisabled.Error())
+			return
+		}
+		if closed {
+			m.showMessage("Rebuy unavailable", "Rebuys are closed.")
+			return
+		}
+	case tournament.PurchaseAddOn:
 		if !m.record.Config.Registration.AddOnsEnabled {
 			m.showMessage("Add-on unavailable", tournament.ErrAddOnsDisabled.Error())
 			return
 		}
-		if !tournament.AddOnWindowOpen(m.record.Config, m.record.Checkpoint.SegmentIndex, m.record.Checkpoint.SegmentFinished) {
+		if m.record.Status == store.StatusEnded || !tournament.AddOnWindowOpen(m.record.Config, m.record.Checkpoint.SegmentIndex, m.record.Checkpoint.SegmentFinished) {
 			m.showMessage("Add-on unavailable", tournament.ErrAddOnWindowClosed.Error())
 			return
 		}
@@ -707,11 +747,7 @@ func (m *Model) openLevelSelect() {
 }
 
 func (m *Model) openSettings() {
-	choices := []string{
-		"Export reusable template", "Import/edit YAML template", "Rename tournament",
-		"Choose end-of-level sound", "Choose one-minute warning sound",
-		"Use default end-of-level sound", "Use default one-minute warning sound",
-	}
+	choices := []string{"Export reusable template", "Import/edit YAML template", "Rename tournament", "Sound settings"}
 	if m.record.Status == store.StatusEnded {
 		choices = append(choices, "Reopen ended tournament")
 	}

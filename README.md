@@ -61,13 +61,13 @@ Controls work with mouse and keyboard. Welcome screen: `N` new, `L` load, `Q` qu
 
 Each tournament is one SQLite file. An OS-backed `.lock` sidecar prevents simultaneous application instances and releases automatically after a crash. The sidecar file is intentionally retained; deleting it while the tournament exists can undermine locking. Ordinary external read-only SQLite reports remain possible while the application is open.
 
-Audit events preserve local timestamps with UTC offsets and, after start, elapsed tournament-clock and real time. Purchases, bust participants, corrections, voids, settings changes, and results are stored transactionally. The app does not track individual chip stacks or automatically subtract blinds/antes. Configured break reminders, including chip-up notices, appear while the break is active and in the transition notice; they do not change chip totals.
+Audit events preserve local timestamps with UTC offsets and, after start, elapsed tournament-clock and real time. Purchases, bust participants, corrections, voids, settings changes, and results are stored transactionally. The app does not track individual chip stacks or automatically subtract blinds/antes. Break `reminder` text is informational. A structured `chipup` value marks a denomination as removed from the visible chip set and adjusts average-stack rounding; it still does not alter recorded chip totals.
 
 ## Sleep and sound
 
 The app makes a best-effort attempt to inhibit system sleep and display blanking while a tournament is open, including when paused. It uses `systemd-inhibit` plus X11 `xset` where available on Linux, `caffeinate` on macOS, and Windows execution-state requests. Desktop environments may ignore or lack these mechanisms; the app reports unavailable inhibition. A wall/monotonic clock comparison pauses at the last saved checkpoint if sleep is detected.
 
-Transition sound is enabled by default and saved in the user's OS configuration directory, outside tournament settings. The GUI embeds separate MP3s for level changes and the one-minute warning; choosing a custom WAV/MP3 overrides the level-change sound. On Linux, MP3 playback needs `ffplay`, `mpv`, or `mpg123`; playback failures appear in the GUI status area, and the visual notice remains.
+Transition sound is enabled by default and saved in the user's OS configuration directory, outside tournament settings. The GUI embeds `src/end.mp3` for level changes and a WAV for the one-minute warning; choosing a custom WAV/MP3 overrides the corresponding sound. On Linux, WAV playback needs `paplay`, `aplay`, or `ffplay`; MP3 playback needs `ffplay`, `mpv`, or `mpg123`. Playback failures appear in the GUI status area, and the visual notice remains.
 
 ## Build and test
 

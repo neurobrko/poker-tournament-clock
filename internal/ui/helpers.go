@@ -112,6 +112,17 @@ func formatChips(value int64) string {
 	return fmt.Sprintf("%d", value)
 }
 
+func segmentReminderLines(segment config.Segment) (chipUp, reminder string) {
+	reminder = strings.TrimSpace(segment.Reminder)
+	if segment.ChipUp > 0 {
+		return fmt.Sprintf("Chip up! (%s)", formatDisplayChips(segment.ChipUp)), reminder
+	}
+	if formatted := formatChipUpReminder(reminder); formatted != reminder {
+		return formatted, ""
+	}
+	return "", reminder
+}
+
 func formatChipUpReminder(reminder string) string {
 	trimmed := strings.TrimSpace(reminder)
 	if !strings.HasPrefix(strings.ToLower(trimmed), "chip up") {
@@ -145,12 +156,29 @@ func transitionNotice(transitions []domain.Transition, schedule []config.Segment
 			notices = append(notices, "HOLD: "+transition.Reason)
 		}
 		if transition.ToIndex > 0 && transition.ToIndex <= len(schedule) {
-			if reminder := formatChipUpReminder(schedule[transition.ToIndex-1].Reminder); reminder != "" {
+			chipUp, reminder := segmentReminderLines(schedule[transition.ToIndex-1])
+			if chipUp != "" && reminder != "" {
+				notices = append(notices, chipUp+"\n"+reminder)
+			} else if chipUp != "" {
+				notices = append(notices, chipUp)
+			} else if reminder != "" {
 				notices = append(notices, reminder)
 			}
 		}
 	}
 	return strings.Join(notices, " · ")
+}
+
+func bustNumbersByEventID(events []store.EventRecord) map[int64]int {
+	numbers := make(map[int64]int)
+	count := 0
+	for _, event := range events {
+		if event.Kind == "bust_recorded" {
+			count++
+			numbers[event.ID] = count
+		}
+	}
+	return numbers
 }
 
 func countLevel(schedule []config.Segment, target int) int {

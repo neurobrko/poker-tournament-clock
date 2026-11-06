@@ -324,9 +324,19 @@ func TestPlayerHistoryShowsPurchaseAndBustActivity(t *testing.T) {
 	}
 	model := NewModel()
 	model.database, model.service, model.players = database, service, players
-	model.showPlayerHistory(bob)
-	if model.modal == nil || !strings.Contains(model.modal.message, "Buy-in") || !strings.Contains(model.modal.message, "Busted") {
-		t.Fatalf("player history missing purchase or bust activity: %+v", model.modal)
+	playerList := &dialog{kind: dialogSelectPlayer, purpose: selectInfo, title: "Select player", players: players, cursor: 1}
+	model.modal = playerList
+	model.choosePlayer(playerList, bob)
+	if model.modal == nil || !strings.Contains(model.modal.message, "PURCHASES · newest first") || !strings.Contains(model.modal.message, "BUSTS · newest first") || !strings.Contains(model.modal.message, "Buy-in") || !strings.Contains(model.modal.message, "Busted in bust #1") {
+		t.Fatalf("player history missing structured purchase or bust activity: %+v", model.modal)
+	}
+	model.onKey(keyEvent{Type: keyEsc})
+	if model.modal != playerList {
+		t.Fatalf("Esc returned to %T instead of player list", model.modal)
+	}
+	model.choosePlayer(playerList, alice)
+	if model.modal == nil || model.modal.kind != dialogMessage || !strings.Contains(model.modal.title, alice.Name) {
+		t.Fatalf("could not open another player's history immediately: %+v", model.modal)
 	}
 }
 
@@ -339,6 +349,8 @@ func TestConfiguredChipUpReminderAppearsDuringBreak(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	template.Schedule[0].Reminder = "Level reminder"
+	template.Schedule[7].Reminder = "Registration reminder"
 	database, err := store.Create(context.Background(), filepath.Join(t.TempDir(), "break-reminder.sqlite"), "Break reminder", template)
 	if err != nil {
 		t.Fatal(err)
@@ -358,8 +370,16 @@ func TestConfiguredChipUpReminderAppearsDuringBreak(t *testing.T) {
 	}
 	d := newTestDesktop(app, window, model)
 	d.render(true)
-	if got := d.home.breakReminder.Text; got != "Chip up! (5)" {
-		t.Fatalf("break reminder = %q", got)
+	if d.home.chipUpReminder.Text != "Chip up! (5)" || d.home.chipUpReminder.Color != Spacedust.Red {
+		t.Fatalf("chip-up warning = %q with color %+v", d.home.chipUpReminder.Text, d.home.chipUpReminder.Color)
+	}
+	if d.home.reminder.Text != "Registration reminder" || d.home.reminder.Color != Spacedust.Yellow {
+		t.Fatalf("reminder line = %q with color %+v", d.home.reminder.Text, d.home.reminder.Color)
+	}
+	model.record.Checkpoint.SegmentIndex = 1
+	d.home.refresh(model)
+	if d.home.chipUpReminder.Text != "" || d.home.reminder.Text != "Level reminder" {
+		t.Fatalf("level reminder display = chip-up %q / reminder %q", d.home.chipUpReminder.Text, d.home.reminder.Text)
 	}
 }
 
@@ -422,13 +442,12 @@ func TestDesktopLevelChangeRequiresConfirmation(t *testing.T) {
 func TestPlayerAndSettingsMenusReflectCurrentActions(t *testing.T) {
 	model := NewModel()
 	model.openSettings()
-	for _, choice := range model.modal.choices {
-		if strings.Contains(strings.ToLower(choice), "toggle sound") {
-			t.Fatal("settings still duplicates the sound toggle")
-		}
+	if len(model.modal.choices) != 4 || model.modal.choices[3] != "Sound settings" {
+		t.Fatalf("main settings menu did not group sound options: %v", model.modal.choices)
 	}
-	if model.modal.choices[3] != "Choose end-of-level sound" || model.modal.choices[4] != "Choose one-minute warning sound" {
-		t.Fatalf("sound choices do not distinguish notification types: %v", model.modal.choices[3:5])
+	model.chooseSettings(3)
+	if model.modal == nil || model.modal.purpose != menuSoundSettings || len(model.modal.choices) != 4 || model.modal.choices[0] != "Choose end-of-level sound" || model.modal.choices[1] != "Choose one-minute warning sound" {
+		t.Fatalf("sound submenu choices = %+v", model.modal)
 	}
 	model.modal = &dialog{kind: dialogMenu, purpose: menuPlayers, choices: []string{"Add player", "Player info / history", "Rename player", "Remove player", "Void purchase"}}
 	for _, choice := range model.modal.choices {
@@ -553,8 +572,8 @@ func TestDesktopChipLegendUsesConfiguredValuesAndColors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	legend, ok := chipLegend(template.ChipValues).(*fyne.Container)
-	if !ok || len(legend.Objects) != 2 {
+	legend := chipLegend(template.ChipValues, nil)
+	if len(legend.Objects) != 2 {
 		t.Fatalf("chip legend rows = %#v", legend)
 	}
 	wantCounts := []int{3, 2}
@@ -582,6 +601,69 @@ func TestDesktopChipLegendUsesConfiguredValuesAndColors(t *testing.T) {
 	}
 }
 
+func TestChipUpRemovesDenominationFromAverageAndGraysLegend(t *testing.T) {
+	template, err := config.DefaultTemplate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	remaining, removed := chipsAfterChipUps(template.ChipValues, template.Schedule, 12)
+	if len(remaining) != 3 || remaining[0].Value != 100 || !removed[5] || !removed[25] {
+		t.Fatalf("chips after third break = %+v, removed = %+v", remaining, removed)
+	}
+	if got := roundedAverageStack(1667, remaining); got != 1600 {
+		t.Fatalf("average stack after 25 chip-up = %d, want 1600", got)
+	}
+	legend := chipLegend(template.ChipValues, removed)
+	var grayed int
+	for _, row := range legend.Objects {
+		for _, token := range row.(*fyne.Container).Objects[0].(*fyne.Container).Objects {
+			chip := token.(*chipToken)
+			if chip.value == "5" || chip.value == "25" {
+				if chip.fill != (color.NRGBA{R: 0x77, G: 0x77, B: 0x77, A: 0xff}) {
+					t.Errorf("removed chip %s fill = %+v, want gray", chip.value, chip.fill)
+				}
+				grayed++
+			}
+		}
+	}
+	if grayed != 2 {
+		t.Fatalf("grayed chip tokens = %d, want 2", grayed)
+	}
+}
+
+func TestDesktopRefreshKeepsAverageVisibleAndUpdatesChipLegendAtThirdBreak(t *testing.T) {
+	app := test.NewApp()
+	defer app.Quit()
+	template, err := config.DefaultTemplate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	model := NewModel()
+	model.record.Config = template
+	model.record.Checkpoint.SegmentIndex = 12
+	model.summary.AverageStack = 1667
+	d := newTestDesktop(app, app.NewWindow("test"), model)
+	_, home := d.mainView()
+	if home.averageStack.Text != "1600" || len(home.nextBreak.parts) != 2 || home.nextBreak.parts[0].text != "AVG. STACK" || home.nextBreak.parts[1].text != "1600" || !home.nextBreak.parts[1].spaceBefore {
+		t.Fatalf("third-break average/next-break display = %q / %+v", home.averageStack.Text, home.nextBreak.parts)
+	}
+	var grayed int
+	for _, row := range home.chipLegendView.Objects {
+		for _, token := range row.(*fyne.Container).Objects[0].(*fyne.Container).Objects {
+			chip := token.(*chipToken)
+			if chip.value == "5" || chip.value == "25" {
+				if chip.fill != (color.NRGBA{R: 0x77, G: 0x77, B: 0x77, A: 0xff}) {
+					t.Errorf("removed chip %s fill = %+v, want gray", chip.value, chip.fill)
+				}
+				grayed++
+			}
+		}
+	}
+	if grayed != 2 {
+		t.Fatalf("third-break grayed chips = %d, want 2", grayed)
+	}
+}
+
 func TestDesktopStatusAndNextBreakTypography(t *testing.T) {
 	template, err := config.DefaultTemplate()
 	if err != nil {
@@ -605,8 +687,35 @@ func TestDesktopStatusAndNextBreakTypography(t *testing.T) {
 	}
 	model.record.Config.Schedule = []config.Segment{{Kind: config.SegmentLevel}}
 	model.record.Checkpoint.SegmentIndex = 0
-	if parts := desktopNextBreakParts(model, 12000, nil); len(parts) != 0 {
-		t.Fatalf("next-break parts without configured break = %+v", parts)
+	if parts := desktopNextBreakParts(model, 12000, nil); len(parts) != 2 || parts[0].text != "AVG. STACK" || parts[1].text != "12k" || !parts[1].spaceBefore {
+		t.Fatalf("next-break/average-stack parts without configured break = %+v", parts)
+	}
+	model.record.Config = template
+	model.record.Checkpoint.SegmentIndex = 12 // Break 3; next break is absent.
+	if parts := desktopNextBreakParts(model, 1667, nil); len(parts) != 2 || parts[0].text != "AVG. STACK" || parts[1].text != "1600" || !parts[1].spaceBefore {
+		t.Fatalf("third-break next-break/average-stack parts = %+v", parts)
+	}
+}
+
+func TestDesktopBreakStatusUsesConfiguredLabel(t *testing.T) {
+	model := NewModel()
+	model.record.Config.Schedule = []config.Segment{
+		{Kind: config.SegmentLevel},
+		{Kind: config.SegmentBreak, Label: "Late registration", Duration: config.Duration(time.Minute)},
+	}
+	model.record.Checkpoint.SegmentIndex = 2
+	model.record.Status = store.StatusRunning
+	segment := &model.record.Config.Schedule[1]
+	if got := desktopStatus(model, segment); got != "LATE REGISTRATION" {
+		t.Fatalf("custom break status = %q", got)
+	}
+	model.record.Status = store.StatusPaused
+	if got := desktopStatus(model, segment); got != "LATE REGISTRATION PAUSED" {
+		t.Fatalf("paused custom break status = %q", got)
+	}
+	segment.Label = ""
+	if got := desktopStatus(model, segment); got != "BREAK 1 PAUSED" {
+		t.Fatalf("unnamed break status = %q", got)
 	}
 }
 

@@ -8,9 +8,15 @@ import (
 	"time"
 )
 
-func TestBundledDesktopMP3SoundsAreEmbedded(t *testing.T) {
-	if len(bundledLevelMP3) < 1000 || len(bundledMinuteMP3) < 1000 {
-		t.Fatalf("bundled level/minute MP3 too small: %d/%d", len(bundledLevelMP3), len(bundledMinuteMP3))
+func TestBundledDesktopSoundsAreEmbedded(t *testing.T) {
+	if len(bundledLevelMP3) < 1000 || len(bundledMinuteWAV) < 1000 {
+		t.Fatalf("bundled level MP3/minute WAV too small: %d/%d", len(bundledLevelMP3), len(bundledMinuteWAV))
+	}
+	if string(bundledLevelMP3[:3]) != "ID3" && bundledLevelMP3[0] != 0xff {
+		t.Fatal("bundled level sound is not MP3")
+	}
+	if string(bundledMinuteWAV[:4]) != "RIFF" || string(bundledMinuteWAV[8:12]) != "WAVE" {
+		t.Fatal("bundled minute sound is not WAV")
 	}
 	if err := PlayMinuteWarningDesktop("", false, nil); err != nil {
 		t.Fatalf("disabled minute-warning sound attempted playback: %v", err)

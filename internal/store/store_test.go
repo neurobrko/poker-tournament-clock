@@ -114,7 +114,7 @@ func TestTournamentRenameIsAuditedAndLockedAfterStart(t *testing.T) {
 	database := createTestStore(t)
 	defer database.Close()
 
-	if err := database.RenameTournament(ctx, "  Saturday  ", time.Time{}); err != nil {
+	if err := database.RenameTournament(ctx, "  Saturday  ", time.Time{}, nil); err != nil {
 		t.Fatal(err)
 	}
 	record, err := database.Tournament(ctx)
@@ -132,7 +132,7 @@ func TestTournamentRenameIsAuditedAndLockedAfterStart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := database.RenameTournament(ctx, "Sunday", time.Now()); !errors.Is(err, ErrConfigurationLocked) {
+	if err := database.RenameTournament(ctx, "Sunday", time.Now(), nil); !errors.Is(err, ErrConfigurationLocked) {
 		t.Fatalf("rename after start error = %v, want ErrConfigurationLocked", err)
 	}
 	after, err := database.Events(ctx)

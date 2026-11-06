@@ -22,8 +22,8 @@ func (s *Service) UpdateConfiguration(ctx context.Context, next config.Template,
 		return fmt.Errorf("encode tournament configuration: %w", err)
 	}
 	payload := map[string]any{"configuration": json.RawMessage(configJSON)}
-	event, _ := action.event("configuration_changed", payload, "")
-	_, err = s.store.CommitEvent(ctx, event, nil, func(tx *sql.Tx, _ int64) error {
+	event, checkpoint := action.event("configuration_changed", payload, "")
+	_, err = s.store.CommitEvent(ctx, event, checkpoint, func(tx *sql.Tx, _ int64) error {
 		var status string
 		var previousJSON string
 		if err := tx.QueryRowContext(ctx, "SELECT status, configuration_json FROM tournament WHERE id = 1").Scan(&status, &previousJSON); err != nil {

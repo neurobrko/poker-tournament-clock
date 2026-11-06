@@ -159,6 +159,10 @@ func (d *desktop) segmentDialog(modal *dialog) fyne.CanvasObject {
 
 func (d *desktop) multiPlayerDialog(modal *dialog) fyne.CanvasObject {
 	rows := make([]fyne.CanvasObject, 0, len(modal.players))
+	finishingLabels := map[string]string(nil)
+	if modal.purpose == selectBustee {
+		finishingLabels = busteeFinishingLabels(int(d.model.summary.ActivePlayers), modal.selectedOrder, modal.tiedIDs)
+	}
 	for index, player := range modal.players {
 		index, player := index, player
 		selected := modal.selected[player.ID]
@@ -169,9 +173,9 @@ func (d *desktop) multiPlayerDialog(modal *dialog) fyne.CanvasObject {
 		label := cursor + "☐  " + player.Name
 		if selected {
 			label = cursor + "☑  " + player.Name
-		}
-		if modal.purpose == selectBustee && modal.tiedIDs[player.ID] {
-			label += "   ·   tie"
+			if place, ok := finishingLabels[player.ID]; ok {
+				label = cursor + "☑  " + place + " · " + player.Name
+			}
 		}
 		button := d.newButton(label, func() {
 			d.moveDialogCursor(index, modal.cursor)
@@ -183,15 +187,17 @@ func (d *desktop) multiPlayerDialog(modal *dialog) fyne.CanvasObject {
 		}
 		rows = append(rows, button)
 	}
-	buttons := []fyne.CanvasObject{}
+	continueButton := d.modalButton("Continue  ·  Enter", func() { d.dispatchKey(keyEvent{Type: keyEnter}) })
+	cancelButton := d.modalButton("Cancel  ·  Esc", func() { d.closeModal() })
 	if modal.purpose == selectBustee {
-		buttons = append(buttons, d.modalButton("Toggle tie for selected  ·  T", func() { d.activate('t') }))
+		controls := container.NewHBox(
+			d.modalButton("Move earlier  ·  [", func() { d.activate('[') }),
+			d.modalButton("Move later  ·  ]", func() { d.activate(']') }),
+			d.modalButton("Toggle tie  ·  T", func() { d.activate('t') }),
+		)
+		return container.NewVBox(d.listScroll(rows), controls, container.NewHBox(layout.NewSpacer(), cancelButton, continueButton))
 	}
-	buttons = append(buttons,
-		d.modalButton("Continue  ·  Enter", func() { d.dispatchKey(keyEvent{Type: keyEnter}) }),
-		d.modalButton("Cancel  ·  Esc", func() { d.closeModal() }),
-	)
-	return container.NewVBox(d.listScroll(rows), container.NewHBox(buttons...))
+	return container.NewVBox(d.listScroll(rows), container.NewHBox(layout.NewSpacer(), cancelButton, continueButton))
 }
 
 func (d *desktop) participantDialog(modal *dialog) fyne.CanvasObject {
@@ -205,7 +211,7 @@ func (d *desktop) participantDialog(modal *dialog) fyne.CanvasObject {
 		if participant.Tied {
 			tie = " · tied"
 		}
-		labels = append(labels, fmt.Sprintf("Bust #%d · %s · %s · order %d%s", participant.BustEventID, name, participant.Role, participant.Position, tie))
+		labels = append(labels, fmt.Sprintf("Bust #%d · %s · %s · order %d%s", participant.BustNumber, name, participant.Role, participant.Position, tie))
 	}
 	list := d.choiceList(labels, modal.cursor, func(index int) { d.clickChoice(index, modal.cursor) })
 	remove := d.modalButton("Remove selected participant  ·  D", func() { d.activate('d') })
@@ -230,6 +236,8 @@ func playerDialogLabels(model *Model, modal *dialog) []string {
 		state := ""
 		if player.Removed {
 			state = " · removed"
+		} else if model.record.Status == store.StatusEnded && model.record.ResultCompleted != nil && *model.record.ResultCompleted && player.Active {
+			state = " · winner"
 		} else if player.SittingOut {
 			state = " · sitting out"
 		} else if player.Active {

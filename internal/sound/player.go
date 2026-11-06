@@ -14,17 +14,17 @@ import (
 //go:embed level-change.mp3
 var bundledLevelMP3 []byte
 
-//go:embed minute-before-level.mp3
-var bundledMinuteMP3 []byte
+//go:embed minute-before-level.wav
+var bundledMinuteWAV []byte
 
 // PlayDesktop plays a configured or bundled MP3 asynchronously. Playback failures are reported without blocking the UI.
 func PlayDesktop(path string, enabled bool, onError func(error)) error {
 	return play(path, enabled, bundledLevelMP3, ".mp3", onError)
 }
 
-// PlayMinuteWarningDesktop plays the configured or bundled warning asynchronously.
+// PlayMinuteWarningDesktop plays the configured or bundled one-minute warning asynchronously.
 func PlayMinuteWarningDesktop(path string, enabled bool, onError func(error)) error {
-	return play(path, enabled, bundledMinuteMP3, ".mp3", onError)
+	return play(path, enabled, bundledMinuteWAV, ".wav", onError)
 }
 
 func play(path string, enabled bool, defaultAudio []byte, defaultExtension string, onError func(error)) error {

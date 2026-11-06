@@ -34,6 +34,7 @@ schedule:
     big_blind: 10
     ante:
       kind: none
+    reminder: "Welcome to the tournament!"
   - kind: level
     duration: 20m
     small_blind: 10
@@ -49,6 +50,7 @@ schedule:
   - kind: break
     label: Break 1
     duration: 10m
+    reminder: "Don't forget the Add-on! Last chance for Rebuy, if you have less then 1k chips!"
   - kind: level
     duration: 20m
     small_blind: 50
@@ -70,13 +72,14 @@ schedule:
   - kind: break
     label: Break 2
     duration: 10m
-    reminder: Chip up! (5)
+    chipup: 5
   - kind: level
     duration: 20m
     small_blind: 500
     big_blind: 1000
     ante:
       kind: none
+    reminder: "Antes starting next level!"
   - kind: level
     duration: 20m
     small_blind: 1000
@@ -94,7 +97,7 @@ schedule:
   - kind: break
     label: Break 3
     duration: 10m
-    reminder: Chip up! (25)
+    chipup: 25
   - kind: level
     duration: 20m
     small_blind: 5000

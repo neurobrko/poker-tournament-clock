@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"reflect"
 	"testing"
 
 	"git.mpx.sk/elvis/poker_clock/internal/tournament"
@@ -9,11 +10,11 @@ import (
 func TestBuildBusteesPreservesOrderAndPartialTieGroups(t *testing.T) {
 	got := buildBustees([]string{"a", "b", "c", "d", "e"}, map[string]bool{"a": true, "b": true, "d": true, "e": true})
 	want := []tournament.Bustee{
-		{PlayerID: "a", Position: 1, Tied: true},
-		{PlayerID: "b", Position: 1, Tied: true},
+		{PlayerID: "a", Position: 3, Tied: true},
+		{PlayerID: "b", Position: 3, Tied: true},
 		{PlayerID: "c", Position: 2},
-		{PlayerID: "d", Position: 3, Tied: true},
-		{PlayerID: "e", Position: 3, Tied: true},
+		{PlayerID: "d", Position: 1, Tied: true},
+		{PlayerID: "e", Position: 1, Tied: true},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("bustee groups = %+v", got)
@@ -22,6 +23,34 @@ func TestBuildBusteesPreservesOrderAndPartialTieGroups(t *testing.T) {
 		if got[index] != want[index] {
 			t.Fatalf("bustee %d = %+v, want %+v", index, got[index], want[index])
 		}
+	}
+}
+
+func TestBusteeFinishingLabelsUseTournamentPlaceNumbers(t *testing.T) {
+	labels := busteeFinishingLabels(5, []string{"worst", "better"}, nil)
+	if labels["worst"] != "5th place" || labels["better"] != "4th place" {
+		t.Fatalf("global bustee places = %+v", labels)
+	}
+	labels = busteeFinishingLabels(5, []string{"tied-a", "tied-b", "best"}, map[string]bool{"tied-a": true, "tied-b": true})
+	if labels["tied-a"] != "4th place–5th place (tie)" || labels["tied-b"] != labels["tied-a"] || labels["best"] != "3rd place" {
+		t.Fatalf("global places with tie = %+v", labels)
+	}
+}
+
+func TestReorderBusteesMovesTiedPlayersAsOneFinishingGroup(t *testing.T) {
+	order := []string{"a", "b", "c", "d"}
+	tied := map[string]bool{"a": true, "b": true}
+	order = reorderBustees(order, tied, "a", 1)
+	if got, want := order, []string{"c", "a", "b", "d"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("move tied group later = %v, want %v", got, want)
+	}
+	bustees := buildBustees(order, tied)
+	if bustees[1].Position != 2 || bustees[2].Position != 2 || !bustees[1].Tied || !bustees[2].Tied {
+		t.Fatalf("reordering split tie group: %+v", bustees)
+	}
+	order = reorderBustees(order, tied, "b", -1)
+	if got, want := order, []string{"a", "b", "c", "d"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("move tied group earlier = %v, want %v", got, want)
 	}
 }
 

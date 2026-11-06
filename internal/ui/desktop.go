@@ -87,7 +87,12 @@ func (d *desktop) clockLoop(stop <-chan struct{}) {
 				if d.closed.Load() {
 					return
 				}
+				modalBeforeTick := d.model.modal
 				d.model.onClockTick()
+				if d.model.modal != modalBeforeTick {
+					d.render(true)
+					return
+				}
 				if d.model.screen == screenMain && d.home != nil {
 					d.home.refresh(d.model)
 					if d.model.modal != nil {

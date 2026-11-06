@@ -32,6 +32,7 @@ func TestDefaultTemplate(t *testing.T) {
 	}
 	levels := make([]Segment, 0, 12)
 	breaks := 0
+	var chipUps []int64
 	for _, segment := range template.Schedule {
 		if segment.Kind == SegmentLevel {
 			levels = append(levels, segment)
@@ -40,6 +41,7 @@ func TestDefaultTemplate(t *testing.T) {
 			}
 		} else {
 			breaks++
+			chipUps = append(chipUps, segment.ChipUp)
 			if segment.Duration.Value() != 10*time.Minute {
 				t.Errorf("break duration = %s, want 10m", segment.Duration.Value())
 			}
@@ -47,6 +49,9 @@ func TestDefaultTemplate(t *testing.T) {
 	}
 	if len(levels) != 12 || breaks != 3 {
 		t.Fatalf("got %d levels and %d breaks, want 12 and 3", len(levels), breaks)
+	}
+	if want := []int64{0, 5, 25}; !reflect.DeepEqual(chipUps, want) {
+		t.Fatalf("default chip-ups = %v, want %v", chipUps, want)
 	}
 	wantBlinds := [][2]int64{{5, 10}, {10, 20}, {25, 50}, {50, 100}, {100, 200}, {250, 500}, {500, 1000}, {1000, 2000}, {2500, 5000}, {5000, 10000}, {10000, 20000}, {25000, 50000}}
 	wantAntes := []AnteConfig{
@@ -102,6 +107,22 @@ func TestChipValuesAreOptionalAndColorsAcceptHTMLNamesAndHex(t *testing.T) {
 	template.ChipValues = []ChipValue{{Value: 5, Color: "red"}, {Value: 5, Color: "blue"}}
 	if err := template.Validate(); err == nil {
 		t.Fatal("duplicate chip values were accepted")
+	}
+}
+
+func TestChipUpMustMatchConfiguredChipAndBelongToBreak(t *testing.T) {
+	template, err := DefaultTemplate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	template.Schedule[7].ChipUp = 10
+	if err := template.Validate(); err == nil {
+		t.Fatal("chipup outside configured chip_values was accepted")
+	}
+	template.Schedule[7].ChipUp = 5
+	template.Schedule[0].ChipUp = 5
+	if err := template.Validate(); err == nil {
+		t.Fatal("chipup on a blind level was accepted")
 	}
 }
 
