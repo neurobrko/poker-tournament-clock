@@ -1,6 +1,6 @@
-# Poker Clock
+# Poker Tournament Clock
 
-A desktop GUI for running self-hosted Texas Hold’em tournaments. The application is a Go/Fyne desktop app with an embedded default tournament template, rules reference, Ubuntu fonts, and pure-Go SQLite database. No terminal or server is required at runtime.
+A desktop GUI for running self-hosted Texas Hold’em tournaments. The application is a Go/Fyne desktop app with an embedded default tournament template, rules reference, Ubuntu fonts, and pure-Go SQLite database. No terminal or server is required at runtime. The welcome screen shows the MIT licence and maintainer contact: Marek Paulik · elvis@elvis.sk · github.com/neurobrko/poker-tournament-clock.
 
 ## Requirements
 
@@ -28,7 +28,7 @@ go build -trimpath -o poker-clock ./cmd/poker-clock
 ./poker-clock
 ```
 
-The app opens fullscreen by default. Resize the window freely or use **F11** (also available as bottom-right button) to toggle fullscreen. Tournament state appears beneath the clock. The dark Spacedust-inspired palette and embedded Ubuntu Sans, Sans Mono, and Condensed fonts work offline; clocks use Mono and footer notices use Condensed. Colors and typography live in `internal/ui/desktop_theme.go` and can be changed centrally. Startup offers **New tournament**, **Load tournament**, and **Quit**. Use on-screen controls or keyboard shortcuts. New tournaments can use the embedded default or import YAML; choose a destination folder and enter a new database filename. Existing files are visible but never overwritten. **Load tournament** lists SQLite databases; to use YAML, choose **New tournament → Browse YAML template**.
+The app opens fullscreen by default. Resize the window freely or use **F11** (also available as bottom-right button) to toggle fullscreen. Tournament state appears beneath the clock. The dark Spacedust-inspired palette and embedded Ubuntu Sans, Sans Mono, and Condensed fonts work offline; clocks use Mono and footer notices use Condensed. Colors and typography live in `internal/ui/desktop_theme.go` and can be changed centrally. Startup offers **New tournament**, **Load tournament**, and **Quit**. Release builds display their version tag in the clock footer between local time and the F11 button. Use on-screen controls or keyboard shortcuts. New tournaments can use the embedded default or import YAML; choose a destination folder and enter a new database filename. Existing files are visible but never overwritten. **Load tournament** lists SQLite databases; to use YAML, choose **New tournament → Browse YAML template**.
 
 A normal Linux desktop build links Fyne's OpenGL/X11 driver. Headless CI/tests use Fyne's software driver with `-tags ci`.
 

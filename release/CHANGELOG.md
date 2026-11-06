@@ -13,6 +13,7 @@ Initial release.
 - Versioned, validated YAML templates with import/export and a built-in default tournament structure.
 - Per-tournament SQLite persistence, transactional audit events, exclusive sidecar locking, and recovery that pauses interrupted clocks at the last saved checkpoint.
 - Mouse and keyboard GUI controls, fullscreen toggle, transition notices and sounds, and an embedded Texas Hold’em rules reference.
+- Poker Tournament Clock welcome-screen branding with MIT licence and maintainer contact details; release version shown in the clock footer.
 - Best-effort OS sleep inhibition for Linux, macOS, and Windows.
 - Automated formatting, tests, vet checks, and GitHub Actions builds/releases for Linux, macOS, and Windows on amd64 and arm64.
 

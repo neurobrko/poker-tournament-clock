@@ -1,6 +1,6 @@
 # Releasing
 
-GitHub Actions checks pushes and pull requests, including native Linux and supported-platform build checks for pull requests. Pushing a `v*` tag builds six standalone binaries and publishes a GitHub Release. The workflow is [`ci-release.yml`](../.github/workflows/ci-release.yml).
+GitHub Actions checks pushes and pull requests, including native Linux and supported-platform build checks for pull requests. Pushing a `v*` tag builds six standalone binaries, embeds that tag as the version shown in the clock footer, and publishes a GitHub Release. The workflow is [`ci-release.yml`](../.github/workflows/ci-release.yml).
 
 ## Before the first public release
 

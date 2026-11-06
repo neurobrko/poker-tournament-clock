@@ -75,17 +75,20 @@ jobs:
           msystem: UCRT64
           update: true
           install: mingw-w64-ucrt-x86_64-gcc
-      - name: Install Windows arm64 LLVM toolchain
+      - name: Install Windows arm64 MinGW toolchain
         if: matrix.goos == 'windows' && matrix.goarch == 'arm64'
         run: |
-          winget install --id LLVM.LLVM --exact --silent --accept-source-agreements --accept-package-agreements
-          Add-Content -Path $env:GITHUB_PATH -Value "$env:ProgramFiles\LLVM\bin"
+          $toolchainVersion = '20261104'
+          $toolchainName = "llvm-mingw-$toolchainVersion-ucrt-aarch64"
+          $archive = Join-Path $env:RUNNER_TEMP "$toolchainName.zip"
+          $url = "https://github.com/mstorsjo/llvm-mingw/releases/download/$toolchainVersion/$toolchainName.zip"
+          Invoke-WebRequest -Uri $url -OutFile $archive
+          if ((Get-FileHash $archive -Algorithm SHA256).Hash -ne '7d7f8387a8706639b0b47a629d6e23f8b3ef9acce67e9832b8cd4c5bb2816eab') { throw 'LLVM MinGW archive SHA-256 mismatch' }
+          Expand-Archive -LiteralPath $archive -DestinationPath $env:RUNNER_TEMP
+          $toolchainBin = Join-Path $env:RUNNER_TEMP "$toolchainName\bin"
+          Add-Content -Path $env:GITHUB_PATH -Value $toolchainBin
+          & (Join-Path $toolchainBin 'aarch64-w64-mingw32-clang.exe') --version
         shell: pwsh
-      - name: Configure Windows arm64 compiler
-        if: matrix.goos == 'windows' && matrix.goarch == 'arm64'
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: arm64
       - name: Build Linux/macOS binary
         if: matrix.goos != 'windows'
         shell: bash
@@ -96,7 +99,7 @@ jobs:
         if: matrix.goos == 'windows'
         shell: pwsh
         env:
-          CC: ${{ matrix.goarch == 'amd64' && 'gcc' || 'clang' }}
+          CC: ${{ matrix.goarch == 'amd64' && 'gcc' || 'aarch64-w64-mingw32-clang' }}
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
           $output = "dist/poker-clock-$($env:GOOS)-$($env:GOARCH).exe"
