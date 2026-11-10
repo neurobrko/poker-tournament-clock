@@ -65,6 +65,30 @@ func TestDesktopNameValidationBlocksSubmission(t *testing.T) {
 	}
 }
 
+func TestTemplateOptionsCheckboxCanBeClicked(t *testing.T) {
+	app := test.NewApp()
+	defer app.Quit()
+	window := app.NewWindow("test")
+	model := NewModel()
+	model.screen = screenMain
+	d := newTestDesktop(app, window, model)
+	model.chooseSettings(0)
+	body := d.modalBody(model.modal).(*fyne.Container)
+	checkbox := body.Objects[0].(*widget.Check)
+	if checkbox.Checked || model.modal.includePlayers {
+		t.Fatal("template player checkbox should start unchecked")
+	}
+	test.Tap(checkbox)
+	if !model.modal.includePlayers {
+		t.Fatal("clicking checkbox did not update option state")
+	}
+	controls := body.Objects[1].(*fyne.Container)
+	test.Tap(controls.Objects[len(controls.Objects)-1].(*widget.Button))
+	if model.browser == nil || model.browser.purpose != browseSaveTemplate || !model.templatePlayersChecked {
+		t.Fatalf("checked template export options = browser %+v, checked=%t", model.browser, model.templatePlayersChecked)
+	}
+}
+
 func TestDesktopStartupAndNewTournamentFlow(t *testing.T) {
 	app := test.NewApp()
 	defer app.Quit()

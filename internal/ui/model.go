@@ -34,11 +34,13 @@ type Model struct {
 
 	startupCursor int
 
-	browser              *fileBrowser
-	browserCancel        screen
-	pendingName          string
-	pendingTemplate      config.Template
-	pendingPlayerImports []pendingPlayerImport
+	browser                *fileBrowser
+	browserCancel          screen
+	pendingName            string
+	pendingTemplate        config.Template
+	templatePlayersChecked bool
+	pendingTemplateImport  *config.Template
+	pendingPlayerImports   []pendingPlayerImport
 
 	database             *store.Store
 	service              *tournament.Service
@@ -479,6 +481,9 @@ func (m *Model) handleRulesKey(key keyEvent) bool {
 func (m *Model) handleBrowserKey(key keyEvent) bool {
 	switch key.Type {
 	case keyEsc:
+		if m.browser.purpose == browseTemplate || m.browser.purpose == browseSaveTemplate {
+			m.templatePlayersChecked = false
+		}
 		m.browser = nil
 		m.screen = m.browserCancel
 	case keyUp:
@@ -506,7 +511,7 @@ func (m *Model) handleBrowserKey(key keyEvent) bool {
 	case keyRunes:
 		switch strings.ToLower(key.String()) {
 		case "n":
-			if m.browser.purpose == browseSaveDatabase || m.browser.purpose == browseSaveTemplate {
+			if m.browser.purpose == browseSaveDatabase || m.browser.purpose == browseSaveTemplate || m.browser.purpose == browseSavePlayers {
 				m.modal = &dialog{kind: dialogText, title: "New file", prompt: "Filename (Enter for " + m.defaultFilename() + ")", textPurpose: textBrowserFilename}
 			}
 		case "h":
@@ -583,7 +588,15 @@ func (m *Model) saveBrowserDestination(path string, purpose browserPurpose) {
 	case browseSavePlayers:
 		m.exportPlayers(path)
 	case browseSaveTemplate:
-		data, err := config.MarshalTemplate(m.record.Config)
+		includePlayers := m.templatePlayersChecked
+		m.templatePlayersChecked = false
+		m.refresh()
+		template := m.record.Config
+		template.Players = nil
+		if includePlayers {
+			template.Players = m.currentRosterPlayers()
+		}
+		data, err := config.MarshalTemplate(template)
 		if err != nil {
 			m.showMessage("Export failed", err.Error())
 			return

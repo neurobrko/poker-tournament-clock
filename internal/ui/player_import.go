@@ -28,11 +28,6 @@ type pendingPlayerImport struct {
 }
 
 func (m *Model) importPlayersFrom(path string) {
-	m.refresh()
-	if m.record.StartedAt != nil {
-		m.showMessage("Import unavailable", "Import players before starting the tournament.")
-		return
-	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		m.showMessage("Player import failed", err.Error())
@@ -43,6 +38,17 @@ func (m *Model) importPlayersFrom(path string) {
 		m.showMessage("Invalid player list", err.Error())
 		return
 	}
+	m.beginPlayerImport(players, nil)
+}
+
+func (m *Model) beginPlayerImport(players []config.Player, template *config.Template) {
+	m.refresh()
+	if m.record.StartedAt != nil {
+		m.pendingTemplateImport = nil
+		m.showMessage("Import unavailable", "Import players before starting the tournament.")
+		return
+	}
+	m.pendingTemplateImport = template
 	m.pendingPlayerImports = make([]pendingPlayerImport, 0, len(players))
 	for _, player := range players {
 		operation := pendingPlayerImport{player: player, action: playerImportAdd}
@@ -114,11 +120,23 @@ func (m *Model) choosePlayerImportConflict(choice int) {
 
 func (m *Model) cancelPlayerImport() {
 	m.pendingPlayerImports = nil
+	m.pendingTemplateImport = nil
 	m.modal = nil
 	m.setStatus("Player import cancelled; roster unchanged.", false)
 }
 
 func (m *Model) applyPlayerImport() {
+	importingTemplate := m.pendingTemplateImport != nil
+	if importingTemplate {
+		if err := m.service.UpdateConfiguration(context.Background(), *m.pendingTemplateImport, m.actionContext()); err != nil {
+			m.pendingPlayerImports = nil
+			m.pendingTemplateImport = nil
+			m.refresh()
+			m.showMessage("Settings import failed", err.Error())
+			return
+		}
+		m.pendingTemplateImport = nil
+	}
 	added, restored, updated, skipped, processed := 0, 0, 0, 0, 0
 	for _, operation := range m.pendingPlayerImports {
 		switch operation.action {
@@ -155,7 +173,11 @@ func (m *Model) applyPlayerImport() {
 	}
 	m.pendingPlayerImports = nil
 	m.refresh()
-	m.setStatus(fmt.Sprintf("Player import complete: %d added, %d aliases updated, %d restored, %d kept/skipped.", added, updated, restored, skipped), false)
+	if importingTemplate {
+		m.setStatus(fmt.Sprintf("Tournament settings imported; roster merged: %d added, %d aliases updated, %d restored, %d kept/skipped.", added, updated, restored, skipped), false)
+	} else {
+		m.setStatus(fmt.Sprintf("Player import complete: %d added, %d aliases updated, %d restored, %d kept/skipped.", added, updated, restored, skipped), false)
+	}
 }
 
 func (m *Model) failPlayerImport(processed int, err error) {
@@ -164,15 +186,19 @@ func (m *Model) failPlayerImport(processed int, err error) {
 	m.showMessage("Player import failed", fmt.Sprintf("Stopped after processing %d entries: %v", processed, err))
 }
 
-func (m *Model) exportPlayers(path string) {
-	m.refresh()
+func (m *Model) currentRosterPlayers() []config.Player {
 	players := make([]config.Player, 0, len(m.players))
 	for _, player := range m.players {
 		if !player.Removed {
 			players = append(players, config.Player{Name: player.Name, Alias: player.Alias})
 		}
 	}
-	data, err := config.MarshalPlayersYAML(players)
+	return players
+}
+
+func (m *Model) exportPlayers(path string) {
+	m.refresh()
+	data, err := config.MarshalPlayersYAML(m.currentRosterPlayers())
 	if err != nil {
 		m.showMessage("Player export failed", err.Error())
 		return

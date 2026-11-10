@@ -36,7 +36,7 @@ A normal Linux desktop build links Fyne's OpenGL/X11 driver. Headless CI/tests u
 
 The embedded default includes 12 blind levels, three breaks, €2 buy-ins/rebuys/add-ons, 1,000/1,000/5,000 chips, no ante, and a default 60/25/15 payout tier. Durations use values such as `20m`, `10m`, and `90s`; prices are euro amounts represented exactly, such as `2`, `2.0`, or `2.00`.
 
-Template schema and rules are documented in [`docs/configuration.md`](docs/configuration.md). Templates can seed a new roster with names and optional aliases; seeded players need separate buy-ins. Importing an edited YAML template is available in Settings before play starts. SQLite becomes the source of truth after import. Configuration is locked once play starts, including after reopening an ended tournament. Export writes a reusable template without the tournament name.
+Template schema and rules are documented in [`docs/configuration.md`](docs/configuration.md). Templates can seed a new roster with names and optional aliases; seeded players need separate buy-ins. Settings template import/export has an unchecked-by-default **Import/export players** checkbox to opt into merging an imported roster or exporting the current non-removed roster. Importing an edited YAML template is available in Settings before play starts. SQLite becomes the source of truth after import. Configuration is locked once play starts, including after reopening an ended tournament. Export writes a reusable template without the tournament name.
 
 ## Keyboard controls
 

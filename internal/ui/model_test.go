@@ -16,6 +16,176 @@ import (
 	"git.mpx.sk/elvis/poker_clock/internal/tournament"
 )
 
+func TestTemplateImportExportPlayerCheckboxDefaultsOff(t *testing.T) {
+	model := NewModel()
+	model.screen = screenMain
+	model.chooseSettings(0)
+	if model.modal == nil || model.modal.kind != dialogTemplateOptions || model.modal.includePlayers || !strings.Contains(model.modal.message, "Import will change the current roster") || !strings.Contains(model.modal.message, "export will include the current roster") {
+		t.Fatalf("template export options = %+v", model.modal)
+	}
+	model.onKey(keyEvent{Type: keySpace})
+	if !model.modal.includePlayers {
+		t.Fatal("Space did not check the player roster option")
+	}
+	model.onKey(keyEvent{Type: keyEnter})
+	if model.browser == nil || model.browser.purpose != browseSaveTemplate || !model.templatePlayersChecked {
+		t.Fatalf("checked export options = browser %+v checked=%t", model.browser, model.templatePlayersChecked)
+	}
+	model.onKey(keyEvent{Type: keyEsc})
+	if model.browser != nil || model.templatePlayersChecked {
+		t.Fatal("cancelled template export kept the roster checkbox set")
+	}
+	model.chooseSettings(1)
+	if model.modal == nil || model.modal.includePlayers {
+		t.Fatalf("template import checkbox was not unchecked: %+v", model.modal)
+	}
+	model.onKey(keyEvent{Type: keyEnter})
+	if model.browser == nil || model.browser.purpose != browseTemplate || model.templatePlayersChecked {
+		t.Fatalf("default import options = browser %+v checked=%t", model.browser, model.templatePlayersChecked)
+	}
+	model.onKey(keyEvent{Type: keyEsc})
+}
+
+func TestTemplateImportWithoutCheckboxIgnoresTemplateRoster(t *testing.T) {
+	ctx := context.Background()
+	template, err := config.DefaultTemplate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	database, err := store.Create(ctx, filepath.Join(t.TempDir(), "template-roster-skip.sqlite"), "Import", template)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	model := NewModel()
+	model.database, model.service = database, tournament.NewService(database)
+	imported := template
+	imported.Players = []config.Player{{Name: "Not imported"}}
+	data, err := config.MarshalTemplate(imported)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "template.yaml")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	model.saveTemplateImport(path)
+	players, err := model.service.Players(ctx, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(players) != 0 || len(model.record.Config.Players) != 0 {
+		t.Fatalf("unchecked template import included players: roster=%+v config=%+v", players, model.record.Config.Players)
+	}
+}
+
+func TestTemplateImportCheckboxMergesRosterAfterConflictChoices(t *testing.T) {
+	ctx := context.Background()
+	template, err := config.DefaultTemplate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	database, err := store.Create(ctx, filepath.Join(t.TempDir(), "template-roster-import.sqlite"), "Import", template)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	service := tournament.NewService(database)
+	alice, err := service.RegisterPlayer(ctx, "Alice", false, tournament.ActionContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.SetPlayerAlias(ctx, alice.ID, "Old", tournament.ActionContext{}); err != nil {
+		t.Fatal(err)
+	}
+	model := NewModel()
+	model.screen, model.database, model.service = screenMain, database, service
+	model.refresh()
+	imported := template
+	imported.Purchases.AddOn.Chips = 6000
+	imported.Players = []config.Player{{Name: "Alice", Alias: "Ace"}, {Name: "Bob", Alias: "Bee"}}
+	data, err := config.MarshalTemplate(imported)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "template.yaml")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	model.templatePlayersChecked = true
+	model.saveTemplateImport(path)
+	if model.modal == nil || model.modal.purpose != menuPlayerImportConflict || model.record.Config.Purchases.AddOn.Chips != 5000 {
+		t.Fatalf("import applied before roster conflict choice: modal=%+v chips=%d", model.modal, model.record.Config.Purchases.AddOn.Chips)
+	}
+	model.modal.cursor = 1
+	model.chooseMenu(model.modal)
+	players, err := service.Players(ctx, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if model.record.Config.Purchases.AddOn.Chips != 6000 || len(players) != 2 || players[0].Alias != "Ace" || players[1].Name != "Bob" {
+		t.Fatalf("template/roster import result: chips=%d players=%+v", model.record.Config.Purchases.AddOn.Chips, players)
+	}
+}
+
+func TestTemplateExportCheckboxUsesCurrentNonRemovedRoster(t *testing.T) {
+	ctx := context.Background()
+	template, err := config.DefaultTemplate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	template.Players = []config.Player{{Name: "Seed"}}
+	database, err := store.Create(ctx, filepath.Join(t.TempDir(), "template-roster-export.sqlite"), "Export", template)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	service := tournament.NewService(database)
+	seeded, err := service.Players(ctx, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.RemovePlayer(ctx, seeded[0].ID, "not attending", tournament.ActionContext{}); err != nil {
+		t.Fatal(err)
+	}
+	current, err := service.RegisterPlayer(ctx, "Current", false, tournament.ActionContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.SetPlayerAlias(ctx, current.ID, "C", tournament.ActionContext{}); err != nil {
+		t.Fatal(err)
+	}
+	model := NewModel()
+	model.database, model.service = database, service
+	uncheckedPath := filepath.Join(t.TempDir(), "export-without-players.yaml")
+	model.saveBrowserDestination(uncheckedPath, browseSaveTemplate)
+	uncheckedData, err := os.ReadFile(uncheckedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unchecked, err := config.ParseTemplate(uncheckedData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(unchecked.Players) != 0 {
+		t.Fatalf("unchecked export included players: %+v", unchecked.Players)
+	}
+	path := filepath.Join(t.TempDir(), "export.yaml")
+	model.templatePlayersChecked = true
+	model.saveBrowserDestination(path, browseSaveTemplate)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exported, err := config.ParseTemplate(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(exported.Players, []config.Player{{Name: "Current", Alias: "C"}}) {
+		t.Fatalf("template exported roster = %+v", exported.Players)
+	}
+}
+
 func TestPlayerAliasesAppearOnlyInPlayersMenuAndCanBeEdited(t *testing.T) {
 	model := NewModel()
 	model.players = []tournament.Player{{ID: "alice", Name: "Alice", Alias: "Ace", Active: true}}

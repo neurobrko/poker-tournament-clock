@@ -46,6 +46,8 @@ func (d *desktop) modalBody(modal *dialog) fyne.CanvasObject {
 	switch modal.kind {
 	case dialogText:
 		return d.textDialog(modal)
+	case dialogTemplateOptions:
+		return d.templateOptionsDialog(modal)
 	case dialogConfirm:
 		return d.confirmDialog()
 	case dialogMessage:
@@ -67,6 +69,15 @@ func (d *desktop) modalBody(modal *dialog) fyne.CanvasObject {
 	default:
 		return nil
 	}
+}
+
+func (d *desktop) templateOptionsDialog(modal *dialog) fyne.CanvasObject {
+	players := widget.NewCheck("Import/export players", func(checked bool) { modal.includePlayers = checked })
+	players.SetChecked(modal.includePlayers)
+	continueButton := d.modalButton("Continue", func() { d.dispatchKey(keyEvent{Type: keyEnter}) })
+	continueButton.Importance = widget.HighImportance
+	cancelButton := d.modalButton("Cancel", func() { d.closeModal() })
+	return container.NewVBox(players, container.NewHBox(layout.NewSpacer(), cancelButton, continueButton))
 }
 
 func (d *desktop) textDialog(modal *dialog) fyne.CanvasObject {

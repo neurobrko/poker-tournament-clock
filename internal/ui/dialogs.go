@@ -27,6 +27,7 @@ const (
 	dialogSelectPurchase
 	dialogSelectBust
 	dialogSelectParticipant
+	dialogTemplateOptions
 )
 
 type dialogPurpose int
@@ -36,6 +37,8 @@ const (
 	menuTemplate
 	menuPlayers
 	menuPlayerImportConflict
+	templateImportOptions
+	templateExportOptions
 	menuSettings
 	menuSoundSettings
 	menuBusts
@@ -90,16 +93,17 @@ const (
 )
 
 type dialog struct {
-	kind        dialogKind
-	purpose     dialogPurpose
-	textPurpose textPurpose
-	confirm     confirmPurpose
-	title       string
-	message     string
-	prompt      string
-	input       string
-	choices     []string
-	cursor      int
+	kind           dialogKind
+	purpose        dialogPurpose
+	textPurpose    textPurpose
+	confirm        confirmPurpose
+	title          string
+	message        string
+	prompt         string
+	input          string
+	choices        []string
+	cursor         int
+	includePlayers bool
 
 	players         []tournament.Player
 	selected        map[string]bool
@@ -139,6 +143,8 @@ func (m *Model) handleDialogKey(key keyEvent) bool {
 	switch d.kind {
 	case dialogText:
 		return m.handleTextDialog(key, d)
+	case dialogTemplateOptions:
+		return m.handleTemplateOptionsKey(key, d)
 	case dialogMenu:
 		return m.handleMenuDialog(key, d)
 	case dialogConfirm:
@@ -358,12 +364,37 @@ func (m *Model) chooseMenu(d *dialog) {
 	}
 }
 
+func (m *Model) handleTemplateOptionsKey(key keyEvent, d *dialog) bool {
+	switch key.Type {
+	case keyEsc:
+		m.closeDialog()
+	case keySpace:
+		d.includePlayers = !d.includePlayers
+	case keyEnter:
+		m.chooseTemplateOptions(d)
+	}
+	return false
+}
+
+func (m *Model) chooseTemplateOptions(d *dialog) {
+	m.templatePlayersChecked = d.includePlayers
+	m.modal = nil
+	if d.purpose == templateImportOptions {
+		m.startBrowser(browseTemplate, screenMain)
+	} else {
+		m.startBrowser(browseSaveTemplate, screenMain)
+	}
+	if m.browser == nil {
+		m.templatePlayersChecked = false
+	}
+}
+
 func (m *Model) chooseSettings(index int) {
 	switch index {
 	case 0:
-		m.startBrowser(browseSaveTemplate, screenMain)
+		m.modal = &dialog{kind: dialogTemplateOptions, purpose: templateExportOptions, title: "Export template", message: "Import will change the current roster; export will include the current roster."}
 	case 1:
-		m.startBrowser(browseTemplate, screenMain)
+		m.modal = &dialog{kind: dialogTemplateOptions, purpose: templateImportOptions, title: "Import template", message: "Import will change the current roster; export will include the current roster."}
 	case 2:
 		m.modal = &dialog{kind: dialogText, title: "Rename tournament", prompt: "Tournament name", input: m.record.Name, textPurpose: textTournamentNameRename}
 	case 3:
@@ -1163,6 +1194,8 @@ func removeString(values []string, target string) []string {
 }
 
 func (m *Model) saveTemplateImport(path string) {
+	includePlayers := m.templatePlayersChecked
+	m.templatePlayersChecked = false
 	data, err := os.ReadFile(path)
 	if err != nil {
 		m.showMessage("Template read failed", err.Error())
@@ -1173,6 +1206,11 @@ func (m *Model) saveTemplateImport(path string) {
 		m.showMessage("Invalid template", err.Error())
 		return
 	}
+	if includePlayers {
+		m.beginPlayerImport(template.Players, &template)
+		return
+	}
+	template.Players = nil
 	action := m.actionContext()
 	if err := m.service.UpdateConfiguration(context.Background(), template, action); err != nil {
 		m.showMessage("Settings import failed", err.Error())

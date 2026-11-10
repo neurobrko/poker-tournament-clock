@@ -1,6 +1,6 @@
 # Tournament YAML configuration
 
-Tournament templates are versioned, validated YAML. The tournament name is entered separately and is intentionally not part of the reusable template. On tournament creation/import, configuration is copied into SQLite; the YAML file is not needed during play. The optional `players` list seeds a new tournament only; importing a template does not modify an existing roster.
+Tournament templates are versioned, validated YAML. The tournament name is entered separately and is intentionally not part of the reusable template. On tournament creation/import, configuration is copied into SQLite; the YAML file is not needed during play. The optional `players` list seeds a new tournament; importing a template merges it into an existing roster only when **Import/export players** is checked.
 
 ## Example
 
@@ -80,8 +80,8 @@ Percentages are not silently normalized in configuration. At payout time, unpaid
 
 ## Editing and export
 
-Use **Settings → Import/edit YAML template** before play to validate and apply an edited file. Changes to the price or chip count for a purchase type are blocked until all non-void purchases of that type are voided with explanations. After play starts, configuration remains locked, including after pausing and reopening an ended tournament.
+Use **Settings → Import/edit YAML template** before play to validate and apply an edited file. Its **Import/export players** checkbox is unchecked by default; when checked, imported players merge into the roster with prompts for name conflicts. Importing players remains unavailable after play starts. Changes to the price or chip count for a purchase type are blocked until all non-void purchases of that type are voided with explanations. After play starts, configuration remains locked, including after pausing and reopening an ended tournament.
 
-**Settings → Export reusable template** writes the current tournament structure as YAML, without the tournament name. Export refuses to overwrite an existing file. The template’s `players` list is the configured seed roster, not a live roster export.
+**Settings → Export reusable template** writes a reusable YAML template without the tournament name and refuses to overwrite files. Its **Import/export players** checkbox is unchecked by default; unchecked export omits the roster, while checked export includes the current non-removed roster and aliases.
 
 Use **Players → Import players from YAML** to merge a simple `- name: Alice` / optional `alias: Ace` list before the tournament starts. Name conflicts prompt to keep the existing player, update its alias, or cancel; removed matches can be restored, skipped, or canceled. Imports resolve all prompts before changing the roster. **Players → Export players to YAML** includes all non-removed players and aliases, and never overwrites an existing file.
