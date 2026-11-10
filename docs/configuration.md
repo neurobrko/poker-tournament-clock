@@ -1,6 +1,6 @@
 # Tournament YAML configuration
 
-Tournament templates are versioned, validated YAML. The tournament name is entered separately and is intentionally not part of the reusable template. On tournament creation/import, configuration is copied into SQLite; the YAML file is not needed during play.
+Tournament templates are versioned, validated YAML. The tournament name is entered separately and is intentionally not part of the reusable template. On tournament creation/import, configuration is copied into SQLite; the YAML file is not needed during play. The optional `players` list seeds a new tournament only; importing a template does not modify an existing roster.
 
 ## Example
 
@@ -23,6 +23,10 @@ registration:
     target: 1
   add_ons_enabled: true
   add_on_break: 1
+players:
+  - name: Alice
+    alias: The Ace
+  - name: Bob
 chip_values:
   - value: 5
     color: red
@@ -66,6 +70,7 @@ The example is intentionally small. A template must contain at least one level, 
 - `registration.rebuys_enabled`: controls rebuy availability. Initial buy-ins still use the registration deadline when rebuys are disabled.
 - `registration.registration_deadline`: applies to initial buy-ins and, when enabled, rebuys. `at` is `start_of_level`, `start_of_break`, or `end_of_break`. `target` is the one-based ordinal of that kind of segment, not the absolute schedule row. An end-of-break deadline closes when that break ends even if its following level is blocked.
 - `registration.add_ons_enabled` and `add_on_break`: independently enable add-ons and identify the one-based break ordinal. Each active player can buy at most one non-void add-on during that break.
+- `players` (optional): starting roster. Each player needs a unique name and may have an alias. Seeded players are registered without buy-ins; record buy-ins separately in the app. Names and aliases are limited to 80 characters. Names are unique after trimming and Unicode case folding.
 - `chip_values` (optional): denominations and HTML/SVG color names or CSS hex colors displayed in the dashboard’s chip legend. Omit it to hide that legend. Values must be positive and unique.
 - `schedule`: ordered `level` and `break` segments. Level durations and break durations use Go duration syntax (`20m`, `10m`, `90s`). A level requires positive small and big blinds, with big blind greater than small blind. A break has no blinds or ante. Breaks follow a level, cannot be consecutive, and cannot end the schedule. Optional break `reminder` text is shown while that break is active and when the transition begins; it does not change chip totals. `chipup` names the chip denomination removed at that break. Once its break starts, that denomination is grayed out and average stack rounds down to the smallest remaining configured denomination.
 - `ante.kind`: `none`, `per_player`, or `big_blind`. Per-player ante requirement is multiplied by active players, including sit-outs. Big-blind ante is counted once for blind-level availability. Antes must be positive when enabled.
@@ -77,4 +82,4 @@ Percentages are not silently normalized in configuration. At payout time, unpaid
 
 Use **Settings → Import/edit YAML template** before play to validate and apply an edited file. Changes to the price or chip count for a purchase type are blocked until all non-void purchases of that type are voided with explanations. After play starts, configuration remains locked, including after pausing and reopening an ended tournament.
 
-**Settings → Export reusable template** writes the current tournament structure as YAML, without the tournament name. Export refuses to overwrite an existing file.
+**Settings → Export reusable template** writes the current tournament structure as YAML, without the tournament name. Export refuses to overwrite an existing file. The template’s `players` list is the configured seed roster, not a live roster export.

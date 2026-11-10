@@ -36,7 +36,7 @@ A normal Linux desktop build links Fyne's OpenGL/X11 driver. Headless CI/tests u
 
 The embedded default includes 12 blind levels, three breaks, €2 buy-ins/rebuys/add-ons, 1,000/1,000/5,000 chips, no ante, and a default 60/25/15 payout tier. Durations use values such as `20m`, `10m`, and `90s`; prices are euro amounts represented exactly, such as `2`, `2.0`, or `2.00`.
 
-Template schema and rules are documented in [`docs/configuration.md`](docs/configuration.md). Importing an edited YAML template is available in Settings before play starts. SQLite becomes the source of truth after import. Configuration is locked once play starts, including after reopening an ended tournament. Export writes a reusable template without the tournament name.
+Template schema and rules are documented in [`docs/configuration.md`](docs/configuration.md). Templates can seed a new roster with names and optional aliases; seeded players need separate buy-ins. Importing an edited YAML template is available in Settings before play starts. SQLite becomes the source of truth after import. Configuration is locked once play starts, including after reopening an ended tournament. Export writes a reusable template without the tournament name.
 
 ## Keyboard controls
 
@@ -44,7 +44,7 @@ Template schema and rules are documented in [`docs/configuration.md`](docs/confi
 | --- | --- |
 | `Space` | Start (with settings-lock confirmation), pause, or resume |
 | `B` / `R` / `A` | Buy-in / rebuy / add-on |
-| `P` | Add, view player purchase/bust history, rename/remove a player, or void a purchase (history only after ending) |
+| `P` | Add/view players, edit aliases, rename/remove players, or void purchases (history only after ending) |
 | `O` | Sit out or return an active player |
 | `L` | Select a configured level or break (confirmation required); optionally set remaining time |
 | `X` | Record a bust, void a bust event, or correct one participant |

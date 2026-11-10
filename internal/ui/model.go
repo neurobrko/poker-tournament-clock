@@ -430,7 +430,7 @@ func (m *Model) handleMainKey(key keyEvent) bool {
 	case "a", "A":
 		m.openPurchase(tournament.PurchaseAddOn)
 	case "p", "P":
-		choices := []string{"Add player", "Player info / history", "Rename player", "Remove player", "Void purchase"}
+		choices := []string{"Add player", "Player info / history", "Rename player", "Remove player", "Void purchase", "Edit player alias"}
 		if m.record.Status == store.StatusEnded {
 			choices = []string{"Player info / history"}
 		}

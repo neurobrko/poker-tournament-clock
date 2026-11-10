@@ -42,6 +42,7 @@ const (
 	selectInfo
 	selectRename
 	selectRemove
+	selectAlias
 	selectSitOut
 	selectBuster
 	selectBustee
@@ -59,6 +60,7 @@ const (
 	textBrowserFilename
 	textAddPlayer
 	textRenamePlayer
+	textPlayerAlias
 	textRemoveExplanation
 	textIncompleteEnd
 	textReopenExplanation
@@ -230,6 +232,14 @@ func (m *Model) submitText(d *dialog) {
 		m.modal = nil
 		m.refresh()
 		m.setStatus("Player name updated; history preserved.", false)
+	case textPlayerAlias:
+		if err := m.service.SetPlayerAlias(context.Background(), d.targetPlayer, value, m.actionContext()); err != nil {
+			m.showMessage("Alias update failed", err.Error())
+			return
+		}
+		m.modal = nil
+		m.refresh()
+		m.setStatus("Player alias updated.", false)
 	case textTournamentNameRename:
 		m.renameTournament(value)
 	case textRemoveExplanation:
@@ -328,6 +338,8 @@ func (m *Model) chooseMenu(d *dialog) {
 			m.openPlayerSelect(selectRemove, nonRemoved(m.players))
 		case 4:
 			m.openVoidPurchase()
+		case 5:
+			m.openPlayerSelect(selectAlias, nonRemoved(m.players))
 		}
 	case menuSettings:
 		m.chooseSettings(d.cursor)
@@ -534,6 +546,8 @@ func (m *Model) choosePlayer(d *dialog, player tournament.Player) {
 		m.setStatus(fmt.Sprintf("%s recorded for %s.", d.purchaseKind, player.Name), false)
 	case selectRename:
 		m.modal = &dialog{kind: dialogText, title: "Rename player", prompt: "Player name", input: player.Name, textPurpose: textRenamePlayer, targetPlayer: player.ID}
+	case selectAlias:
+		m.modal = &dialog{kind: dialogText, title: "Edit player alias", prompt: "Alias (leave blank to clear)", input: player.Alias, textPurpose: textPlayerAlias, targetPlayer: player.ID}
 	case selectRemove:
 		m.modal = &dialog{kind: dialogText, title: "Remove player", prompt: "Explanation (required, max 200 chars)", textPurpose: textRemoveExplanation, targetPlayer: player.ID}
 	case selectSitOut:

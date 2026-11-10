@@ -86,6 +86,43 @@ func TestCreateOpenLockAndExternalReadOnlyReport(t *testing.T) {
 	}
 }
 
+func TestCreateSeedsConfiguredPlayersWithoutBuyIns(t *testing.T) {
+	ctx := context.Background()
+	template, err := config.DefaultTemplate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	template.Players = []config.Player{{Name: "Alice", Alias: "Ace"}, {Name: "Bob"}}
+	database, err := Create(ctx, filepath.Join(t.TempDir(), "seeded.sqlite"), "Seeded", template)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	var count, purchases int
+	var alias string
+	if err := database.ViewTx(ctx, func(tx *sql.Tx) error {
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM players`).Scan(&count); err != nil {
+			return err
+		}
+		if err := tx.QueryRowContext(ctx, `SELECT alias FROM players WHERE name = 'Alice'`).Scan(&alias); err != nil {
+			return err
+		}
+		return tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM purchases`).Scan(&purchases)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 || alias != "Ace" || purchases != 0 {
+		t.Fatalf("seeded roster = %d players, Alice alias %q, %d purchases", count, alias, purchases)
+	}
+	events, err := database.Events(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 3 || events[1].Kind != "player_created" || events[2].Kind != "player_created" {
+		t.Fatalf("seed audit events = %v", events)
+	}
+}
+
 func TestDatabasePathWithURICharacters(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "tournament # 1.db")

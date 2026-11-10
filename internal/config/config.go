@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"golang.org/x/image/colornames"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/unicode/norm"
 	"gopkg.in/yaml.v3"
 )
 
@@ -113,6 +115,7 @@ type Template struct {
 	Purchases    PurchaseConfig     `yaml:"purchases"`
 	Registration RegistrationConfig `yaml:"registration"`
 	ChipValues   []ChipValue        `yaml:"chip_values,omitempty"`
+	Players      []Player           `yaml:"players,omitempty"`
 	Schedule     []Segment          `yaml:"schedule"`
 	PrizeTiers   []PrizeTier        `yaml:"prize_tiers"`
 }
@@ -120,6 +123,13 @@ type Template struct {
 type ChipValue struct {
 	Value int64  `yaml:"value"`
 	Color string `yaml:"color"`
+}
+
+const MaxPlayerNameLength = 80
+
+type Player struct {
+	Name  string `yaml:"name"`
+	Alias string `yaml:"alias,omitempty"`
 }
 
 type PurchaseConfig struct {
@@ -250,6 +260,9 @@ func (t Template) Validate() error {
 	if err := validateChipValues(t.ChipValues); err != nil {
 		return err
 	}
+	if err := validatePlayers(t.Players); err != nil {
+		return err
+	}
 	if err := validatePurchase("initial buy-in", t.Purchases.InitialBuyIn); err != nil {
 		return err
 	}
@@ -266,6 +279,25 @@ func (t Template) Validate() error {
 		return err
 	}
 	return t.validatePrizeTiers()
+}
+
+func validatePlayers(players []Player) error {
+	seen := make(map[string]bool, len(players))
+	for index, player := range players {
+		name := norm.NFC.String(strings.TrimSpace(player.Name))
+		if name == "" || len([]rune(name)) > MaxPlayerNameLength {
+			return fmt.Errorf("players item %d name must contain 1 to %d characters", index+1, MaxPlayerNameLength)
+		}
+		key := norm.NFC.String(cases.Fold().String(name))
+		if seen[key] {
+			return fmt.Errorf("players item %d duplicates name %q", index+1, player.Name)
+		}
+		seen[key] = true
+		if len([]rune(strings.TrimSpace(player.Alias))) > MaxPlayerNameLength {
+			return fmt.Errorf("players item %d alias cannot exceed %d characters", index+1, MaxPlayerNameLength)
+		}
+	}
+	return nil
 }
 
 func validateChipValues(chips []ChipValue) error {

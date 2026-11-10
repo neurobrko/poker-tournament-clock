@@ -77,7 +77,7 @@ func (d *desktop) textDialog(modal *dialog) fyne.CanvasObject {
 	entry.SetPlaceHolder(modal.prompt)
 	entry.OnChanged = func(value string) { modal.input = value }
 	maxChars := 200
-	if modal.textPurpose == textTournamentName || modal.textPurpose == textTournamentNameRename || modal.textPurpose == textAddPlayer || modal.textPurpose == textRenamePlayer {
+	if modal.textPurpose == textTournamentName || modal.textPurpose == textTournamentNameRename || modal.textPurpose == textAddPlayer || modal.textPurpose == textRenamePlayer || modal.textPurpose == textPlayerAlias {
 		maxChars = store.MaxNameLength
 	}
 	entry.Validator = func(value string) error {
@@ -243,7 +243,11 @@ func playerDialogLabels(model *Model, modal *dialog) []string {
 		} else if player.Active {
 			state = " · active"
 		}
-		labels = append(labels, player.Name+state)
+		name := player.Name
+		if player.Alias != "" && (modal.purpose == selectInfo || modal.purpose == selectRename || modal.purpose == selectRemove || modal.purpose == selectAlias) {
+			name += " (" + player.Alias + ")"
+		}
+		labels = append(labels, name+state)
 	}
 	return labels
 }

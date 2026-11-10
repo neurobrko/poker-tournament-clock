@@ -85,6 +85,35 @@ func TestDefaultTemplate(t *testing.T) {
 	}
 }
 
+func TestTemplatePlayersSupportAliasesAndValidateNames(t *testing.T) {
+	template, err := DefaultTemplate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	template.Players = []Player{{Name: "Alice", Alias: "The Ace"}, {Name: "Bob"}}
+	data, err := MarshalTemplate(template)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := ParseTemplate(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(parsed.Players, template.Players) {
+		t.Fatalf("template players = %+v, want %+v", parsed.Players, template.Players)
+	}
+	for _, players := range [][]Player{
+		{{Name: "Alice"}, {Name: " alice "}},
+		{{Name: "   "}},
+		{{Name: "A", Alias: strings.Repeat("x", MaxPlayerNameLength+1)}},
+	} {
+		template.Players = players
+		if err := template.Validate(); err == nil {
+			t.Errorf("invalid players accepted: %+v", players)
+		}
+	}
+}
+
 func TestChipValuesAreOptionalAndColorsAcceptHTMLNamesAndHex(t *testing.T) {
 	template, err := DefaultTemplate()
 	if err != nil {

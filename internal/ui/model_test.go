@@ -15,6 +15,35 @@ import (
 	"git.mpx.sk/elvis/poker_clock/internal/tournament"
 )
 
+func TestPlayerAliasesAppearOnlyInPlayersMenuAndCanBeEdited(t *testing.T) {
+	model := NewModel()
+	model.players = []tournament.Player{{ID: "alice", Name: "Alice", Alias: "Ace", Active: true}}
+	labels := playerDialogLabels(model, &dialog{purpose: selectInfo, players: model.players})
+	if len(labels) != 1 || labels[0] != "Alice (Ace) · active" {
+		t.Fatalf("players menu label = %v", labels)
+	}
+	labels = playerDialogLabels(model, &dialog{purpose: selectPurchase, players: model.players})
+	if len(labels) != 1 || labels[0] != "Alice · active" {
+		t.Fatalf("non-players menu unexpectedly showed alias: %v", labels)
+	}
+	model.screen = screenMain
+	model.record.Status = store.StatusNotStarted
+	model.onKey(keyEvent{Type: keyRunes, Runes: []rune{'p'}})
+	menu := model.modal
+	if len(menu.choices) != 6 || menu.choices[5] != "Edit player alias" {
+		t.Fatalf("players menu choices = %v", menu.choices)
+	}
+	menu.cursor = 5
+	model.chooseMenu(menu)
+	if model.modal.purpose != selectAlias || len(model.modal.players) != 1 {
+		t.Fatalf("alias editor selection = %+v", model.modal)
+	}
+	model.choosePlayer(model.modal, model.players[0])
+	if model.modal.textPurpose != textPlayerAlias || model.modal.input != "Ace" {
+		t.Fatalf("alias editor dialog = %+v", model.modal)
+	}
+}
+
 func TestChipUpAndReminderAreKeptOnSeparateLines(t *testing.T) {
 	segment := config.Segment{Kind: config.SegmentBreak, ChipUp: 25, Reminder: "Registration closes soon"}
 	chipUp, reminder := segmentReminderLines(segment)
