@@ -28,6 +28,7 @@ const (
 	dialogSelectBust
 	dialogSelectParticipant
 	dialogTemplateOptions
+	dialogEditorForm
 )
 
 type dialogPurpose int
@@ -39,6 +40,13 @@ const (
 	menuPlayerImportConflict
 	templateImportOptions
 	templateExportOptions
+	menuEditorSource
+	editorFormPurchases
+	editorFormLevel
+	editorFormBreak
+	editorFormChip
+	editorFormPlayer
+	editorFormPrize
 	menuSettings
 	menuSoundSettings
 	menuBusts
@@ -90,6 +98,7 @@ const (
 	confirmVoidBust
 	confirmCorrectBust
 	confirmSelectSegment
+	confirmDiscardEditor
 )
 
 type dialog struct {
@@ -104,6 +113,8 @@ type dialog struct {
 	choices        []string
 	cursor         int
 	includePlayers bool
+	formValues     map[string]string
+	editorIndex    int
 
 	players         []tournament.Player
 	selected        map[string]bool
@@ -145,6 +156,8 @@ func (m *Model) handleDialogKey(key keyEvent) bool {
 		return m.handleTextDialog(key, d)
 	case dialogTemplateOptions:
 		return m.handleTemplateOptionsKey(key, d)
+	case dialogEditorForm:
+		return m.handleEditorFormKey(key, d)
 	case dialogMenu:
 		return m.handleMenuDialog(key, d)
 	case dialogConfirm:
@@ -318,6 +331,8 @@ func (m *Model) chooseMenu(d *dialog) {
 		return
 	}
 	switch d.purpose {
+	case menuEditorSource:
+		m.chooseEditorSource(d.cursor)
 	case menuTemplate:
 		switch d.cursor {
 		case 0:
@@ -532,6 +547,11 @@ func (m *Model) confirmAction(d *dialog) bool {
 	case confirmSelectSegment:
 		m.modal = nil
 		m.applySegmentSelection(d.segmentIndex, d.remaining)
+	case confirmDiscardEditor:
+		m.modal = nil
+		m.screen = screenStartup
+		m.editorDirty = false
+		m.setStatus(nil, false)
 	}
 	if m.suspendedModal != nil && m.modal == nil {
 		m.modal, m.suspendedModal = m.suspendedModal, nil

@@ -16,6 +16,98 @@ import (
 	"git.mpx.sk/elvis/poker_clock/internal/tournament"
 )
 
+func TestTournamentEditorBuildsStructuredTemplateDraft(t *testing.T) {
+	model := NewModel()
+	model.onKey(keyEvent{Type: keyRunes, Runes: []rune{'t'}})
+	if model.modal == nil || model.modal.purpose != menuEditorSource || len(model.modal.choices) != 4 {
+		t.Fatalf("editor source choices = %+v", model.modal)
+	}
+	model.modal.cursor = 2
+	model.chooseMenu(model.modal)
+	if model.screen != screenEditor || len(model.editorTemplate.Schedule) != 0 || model.editorName != "" {
+		t.Fatalf("scratch editor = screen %v, template %+v", model.screen, model.editorTemplate)
+	}
+	model.openEditorForm(editorFormLevel, -1)
+	model.saveEditorForm(model.modal)
+	model.openEditorForm(editorFormBreak, -1)
+	model.saveEditorForm(model.modal)
+	model.openEditorForm(editorFormLevel, -1)
+	model.saveEditorForm(model.modal)
+	model.openEditorForm(editorFormChip, -1)
+	model.modal.formValues["value"], model.modal.formValues["color"] = "5", "red"
+	model.saveEditorForm(model.modal)
+	model.openEditorForm(editorFormLevel, 0)
+	model.modal.formValues["ante_kind"], model.modal.formValues["ante_amount"] = string(config.AntePerPlayer), "1"
+	model.modal.formValues["reminder"] = "Ante begins next level"
+	model.saveEditorForm(model.modal)
+	model.openEditorForm(editorFormBreak, 1)
+	model.modal.formValues["chipup"], model.modal.formValues["reminder"] = "5", "Remove smallest chips"
+	model.saveEditorForm(model.modal)
+	model.openEditorForm(editorFormPlayer, -1)
+	model.modal.formValues["name"], model.modal.formValues["alias"] = "Alice", "Ace"
+	model.saveEditorForm(model.modal)
+	model.openEditorForm(editorFormPrize, 0)
+	model.modal.formValues["percentages"] = "70, 30"
+	model.saveEditorForm(model.modal)
+	model.openEditorForm(editorFormPurchases, -1)
+	model.modal.formValues["initial_price"] = "3.00"
+	model.modal.formValues["rebuys_enabled"] = "false"
+	model.modal.formValues["deadline_at"] = string(config.DeadlineAtBreakEnd)
+	model.modal.formValues["addons_enabled"] = "true"
+	model.modal.formValues["addon_break"] = "1"
+	model.saveEditorForm(model.modal)
+	if err := model.editorTemplate.Validate(); err != nil {
+		t.Fatalf("completed structured draft is invalid: %v", err)
+	}
+	if len(model.editorTemplate.Schedule) != 3 || model.editorTemplate.Players[0] != (config.Player{Name: "Alice", Alias: "Ace"}) || model.editorTemplate.Purchases.InitialBuyIn.Price != 300 {
+		t.Fatalf("structured draft fields were not applied: %+v", model.editorTemplate)
+	}
+	model.moveEditorSchedule(1, 1)
+	if model.editorTemplate.Schedule[1].Kind != config.SegmentLevel || model.editorTemplate.Schedule[2].Kind != config.SegmentBreak {
+		t.Fatal("schedule reorder did not move selected segment")
+	}
+	model.moveEditorSchedule(2, -1)
+	if err := model.editorTemplate.Validate(); err != nil {
+		t.Fatalf("restored schedule order is invalid: %v", err)
+	}
+}
+
+func TestTournamentEditorSavesNamelessTemplateAndCanCreateAfterSave(t *testing.T) {
+	model := NewModel()
+	template, err := config.DefaultTemplate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	model.startEditor(template)
+	model.editorName = "Sunday game"
+	model.editorAfterSave = true
+	model.saveEditorTemplate()
+	if model.browser == nil || model.browser.purpose != browseEditorSaveTemplate {
+		t.Fatalf("save template browser = %+v", model.browser)
+	}
+	path := filepath.Join(t.TempDir(), "saved.yaml")
+	model.saveEditorTemplateFile(path)
+	saved, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := config.ParseTemplate(saved); err != nil {
+		t.Fatal(err)
+	}
+	if model.browser == nil || model.browser.purpose != browseSaveDatabase || model.pendingName != "Sunday game" {
+		t.Fatalf("create-after-save flow: browser=%+v name=%q", model.browser, model.pendingName)
+	}
+	model.onKey(keyEvent{Type: keyEsc})
+	if model.screen != screenEditor {
+		t.Fatalf("cancelled post-save creation returned to %v", model.screen)
+	}
+	model.editorAfterSave = false
+	model.createEditorTournament()
+	if model.browser == nil || model.browser.purpose != browseSaveDatabase {
+		t.Fatalf("direct create browser = %+v", model.browser)
+	}
+}
+
 func TestTemplateImportExportPlayerCheckboxDefaultsOff(t *testing.T) {
 	model := NewModel()
 	model.screen = screenMain
@@ -931,6 +1023,13 @@ func TestFileBrowserFilteringSaveAndBounds(t *testing.T) {
 	}
 	if path, err := playerSaver.newPath("players"); err != nil || filepath.Ext(path) != ".yaml" {
 		t.Fatalf("new player list path=%q err=%v", path, err)
+	}
+	editorSaver, err := newFileBrowser(browseEditorSaveTemplate, directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path, err := editorSaver.newPath("tournament-template"); err != nil || filepath.Ext(path) != ".yaml" {
+		t.Fatalf("new editor template path=%q err=%v", path, err)
 	}
 	for i := 0; i < 5; i++ {
 		browser.entries = append(browser.entries, browserEntry{name: fmt.Sprintf("%d.yaml", i), selectable: true})

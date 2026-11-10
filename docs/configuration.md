@@ -80,6 +80,8 @@ Percentages are not silently normalized in configuration. At payout time, unpaid
 
 ## Editing and export
 
+The welcome screen’s **Tournament editor** can start from the embedded default, an existing YAML template, or a scratch schedule. Structured forms edit schedule segments, purchases, registration, chips, players, and prize tiers. The tournament name stays separate; save as a reusable nameless template, create a tournament directly, or create one after saving.
+
 Use **Settings → Import/edit YAML template** before play to validate and apply an edited file. Its **Import/export players** checkbox is unchecked by default; when checked, imported players merge into the roster with prompts for name conflicts. Importing players remains unavailable after play starts. Changes to the price or chip count for a purchase type are blocked until all non-void purchases of that type are voided with explanations. After play starts, configuration remains locked, including after pausing and reopening an ended tournament.
 
 **Settings → Export reusable template** writes a reusable YAML template without the tournament name and refuses to overwrite files. Its **Import/export players** checkbox is unchecked by default; unchecked export omits the roster, while checked export includes the current non-removed roster and aliases.

@@ -89,6 +89,31 @@ func TestTemplateOptionsCheckboxCanBeClicked(t *testing.T) {
 	}
 }
 
+func TestTournamentEditorRendersStructuredForms(t *testing.T) {
+	app := test.NewApp()
+	defer app.Quit()
+	window := app.NewWindow("test")
+	model := NewModel()
+	template, err := config.DefaultTemplate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	model.startEditor(template)
+	d := newTestDesktop(app, window, model)
+	d.render(true)
+	if window.Content() == nil || d.entry == nil {
+		t.Fatal("tournament editor did not render or focus name field")
+	}
+	for _, purpose := range []dialogPurpose{editorFormPurchases, editorFormLevel, editorFormBreak, editorFormChip, editorFormPlayer, editorFormPrize} {
+		model.openEditorForm(purpose, -1)
+		d.render(true)
+		if window.Content() == nil || model.modal == nil || model.modal.kind != dialogEditorForm {
+			t.Fatalf("editor form %d did not render", purpose)
+		}
+		model.modal = nil
+	}
+}
+
 func TestDesktopStartupAndNewTournamentFlow(t *testing.T) {
 	app := test.NewApp()
 	defer app.Quit()

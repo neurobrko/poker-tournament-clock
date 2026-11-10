@@ -48,6 +48,8 @@ func (d *desktop) modalBody(modal *dialog) fyne.CanvasObject {
 		return d.textDialog(modal)
 	case dialogTemplateOptions:
 		return d.templateOptionsDialog(modal)
+	case dialogEditorForm:
+		return d.editorFormDialog(modal)
 	case dialogConfirm:
 		return d.confirmDialog()
 	case dialogMessage:
@@ -315,7 +317,7 @@ func (d *desktop) browserView() fyne.CanvasObject {
 	unsupportedButton := d.newButton(unsupportedFilesButtonLabel(browser.showUnsupported), func() { d.toggleUnsupportedFiles() })
 	d.browserButtons = append(d.browserButtons, hiddenButton, unsupportedButton, up)
 	footerButtons := []fyne.CanvasObject{hiddenButton, unsupportedButton}
-	if browser.purpose == browseSaveDatabase || browser.purpose == browseSaveTemplate {
+	if browser.purpose == browseSaveDatabase || browser.purpose == browseSaveTemplate || browser.purpose == browseSavePlayers || browser.purpose == browseEditorSaveTemplate {
 		newFile := d.newButton("N · New file", func() { d.activate('n') })
 		d.browserButtons = append(d.browserButtons, newFile)
 		footerButtons = append(footerButtons, newFile)

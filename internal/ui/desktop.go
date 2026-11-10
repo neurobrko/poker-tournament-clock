@@ -144,6 +144,9 @@ func (d *desktop) render(force bool) {
 	case m.screen == screenRules:
 		content = d.rulesView()
 		d.home = nil
+	case m.screen == screenEditor:
+		content = d.editorView()
+		d.home = nil
 	case m.screen == screenStartup || m.database == nil:
 		content = d.startupView()
 		d.home = nil
@@ -180,6 +183,9 @@ func (d *desktop) baseView() fyne.CanvasObject {
 	}
 	if d.model.screen == screenRules {
 		return d.rulesView()
+	}
+	if d.model.screen == screenEditor {
+		return d.editorView()
 	}
 	return d.startupView()
 }
@@ -402,7 +408,7 @@ func (d *desktop) refreshDualDisplay() {
 }
 
 func (d *desktop) advanceWelcomeSelection() {
-	d.model.startupCursor = (d.model.startupCursor + 1) % 3
+	d.model.startupCursor = (d.model.startupCursor + 1) % 4
 	d.render(true)
 }
 
@@ -411,7 +417,7 @@ func (d *desktop) newButton(label string, tapped func()) *widget.Button {
 }
 
 func (d *desktop) dispatchRune(value rune) {
-	if value == 0 {
+	if value == 0 || d.model.screen == screenEditor && d.model.browser == nil {
 		return
 	}
 	d.dispatchKey(keyEvent{Type: keyRunes, Runes: []rune{value}})

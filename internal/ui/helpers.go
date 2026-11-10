@@ -14,12 +14,16 @@ func browserTitle(purpose browserPurpose) string {
 	switch purpose {
 	case browseTournamentDB:
 		return "LOAD TOURNAMENT DATABASE (.db / .sqlite)"
-	case browseTemplate:
+	case browseTemplate, browseEditorTemplate:
 		return "SELECT YAML TEMPLATE (.yaml / .yml)"
 	case browseSaveDatabase:
 		return "NEW TOURNAMENT DATABASE"
-	case browseSaveTemplate:
+	case browseSaveTemplate, browseEditorSaveTemplate:
 		return "EXPORT TEMPLATE"
+	case browsePlayers:
+		return "IMPORT PLAYER ROSTER (.yaml / .yml)"
+	case browseSavePlayers:
+		return "EXPORT PLAYER ROSTER"
 	case browseLevelSound:
 		return "SELECT END-OF-LEVEL SOUND (.wav / .mp3)"
 	case browseMinuteSound:

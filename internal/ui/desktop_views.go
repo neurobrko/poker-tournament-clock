@@ -451,8 +451,9 @@ func (d *desktop) startupView() fyne.CanvasObject {
 	subtitle.Alignment = fyne.TextAlignCenter
 	newTournament := d.newButton("New tournament (N)", func() { d.activate('n') })
 	loadTournament := d.newButton("Load tournament (L)", func() { d.activate('l') })
+	editor := d.newButton("Tournament editor (T)", func() { d.activate('t') })
 	quit := d.newButton("Quit (Q)", func() { d.activate('q') })
-	choices := []*widget.Button{newTournament, loadTournament, quit}
+	choices := []*widget.Button{newTournament, loadTournament, editor, quit}
 	d.startupButtons = choices
 	for index, button := range choices {
 		button.Alignment = widget.ButtonAlignCenter
@@ -461,7 +462,7 @@ func (d *desktop) startupView() fyne.CanvasObject {
 			button.Importance = widget.HighImportance
 		}
 	}
-	buttons := container.NewVBox(newTournament, loadTournament, quit)
+	buttons := container.NewVBox(newTournament, loadTournament, editor, quit)
 	footer := canvas.NewText("MIT Licence · Marek Paulik · elvis@elvis.sk · github.com/neurobrko/poker-tournament-clock", Spacedust.Muted)
 	footer.TextSize = 12
 	footer.Alignment = fyne.TextAlignCenter
