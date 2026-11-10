@@ -85,7 +85,8 @@ func (d *desktop) templateOptionsDialog(modal *dialog) fyne.CanvasObject {
 func (d *desktop) textDialog(modal *dialog) fyne.CanvasObject {
 	prompt := widget.NewLabel(modal.prompt)
 	prompt.Wrapping = fyne.TextWrapWord
-	entry := widget.NewEntry()
+	d.entry = newDesktopEntry()
+	entry := d.entry.Entry
 	entry.SetText(modal.input)
 	entry.SetPlaceHolder(modal.prompt)
 	entry.OnChanged = func(value string) { modal.input = value }
@@ -99,11 +100,8 @@ func (d *desktop) textDialog(modal *dialog) fyne.CanvasObject {
 		}
 		return nil
 	}
-	d.entry = &desktopEntry{
-		Entry:      entry,
-		escape:     func() { d.closeModal() },
-		fullscreen: func() { d.window.SetFullScreen(!d.window.FullScreen()) },
-	}
+	d.entry.escape = func() { d.closeModal() }
+	d.entry.fullscreen = func() { d.toggleFullScreen() }
 	submitText := func() {
 		modal.input = entry.Text
 		if err := entry.Validate(); err != nil {
@@ -153,7 +151,7 @@ func (d *desktop) choiceList(choices []string, cursor int, choose func(int)) fyn
 
 func (d *desktop) listScroll(rows []fyne.CanvasObject) fyne.CanvasObject {
 	content := container.New(layout.NewCustomPaddedVBoxLayout(3), rows...)
-	d.modalScroll = container.NewVScroll(content)
+	d.modalScroll = container.NewVScroll(container.New(windowSideInsetLayout{inset: 12}, content))
 	visibleRows := len(rows)
 	if visibleRows > 7 {
 		visibleRows = 7
@@ -173,7 +171,7 @@ func (d *desktop) segmentDialog(modal *dialog) fyne.CanvasObject {
 func (d *desktop) multiPlayerDialog(modal *dialog) fyne.CanvasObject {
 	rows := make([]fyne.CanvasObject, 0, len(modal.players))
 	finishingLabels := map[string]string(nil)
-	if modal.purpose == selectBustee {
+	if modal.purpose == selectBustee && bustPlacesVisible(d.model) {
 		finishingLabels = busteeFinishingLabels(int(d.model.summary.ActivePlayers), modal.selectedOrder, modal.tiedIDs)
 	}
 	for index, player := range modal.players {
@@ -396,22 +394,22 @@ type desktopEntry struct {
 	fullscreen func()
 }
 
-func (e *desktopEntry) AcceptsTab() bool { return true }
+func newDesktopEntry() *desktopEntry {
+	entry := &widget.Entry{Wrapping: fyne.TextWrap(fyne.TextTruncateClip)}
+	wrapped := &desktopEntry{Entry: entry}
+	entry.ExtendBaseWidget(wrapped)
+	return wrapped
+}
+
+func (e *desktopEntry) AcceptsTab() bool { return false }
 
 func (e *desktopEntry) TypedKey(event *fyne.KeyEvent) {
-	if event != nil && event.Name == fyne.KeyTab {
+	if event != nil && event.Name == fyne.KeyEscape && e.escape != nil {
+		e.escape()
 		return
 	}
-	if event != nil && event.Name == fyne.KeyEscape {
-		if e.escape != nil {
-			e.escape()
-		}
-		return
-	}
-	if event != nil && event.Name == fyne.KeyF11 {
-		if e.fullscreen != nil {
-			e.fullscreen()
-		}
+	if event != nil && event.Name == fyne.KeyF11 && e.fullscreen != nil {
+		e.fullscreen()
 		return
 	}
 	e.Entry.TypedKey(event)

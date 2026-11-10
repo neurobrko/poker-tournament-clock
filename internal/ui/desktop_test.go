@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/canvas"
+	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/widget"
 	"git.mpx.sk/elvis/poker_clock/internal/config"
@@ -110,7 +112,89 @@ func TestTournamentEditorRendersStructuredForms(t *testing.T) {
 		if window.Content() == nil || model.modal == nil || model.modal.kind != dialogEditorForm {
 			t.Fatalf("editor form %d did not render", purpose)
 		}
+		if height := d.modalBody(model.modal).MinSize().Height; height < 360 {
+			t.Fatalf("editor form %d height = %v, want at least 360", purpose, height)
+		}
+		if purpose == editorFormPurchases {
+			focused := d.entry
+			d.dispatchKeyEvent(&fyne.KeyEvent{Name: fyne.KeyRight})
+			if d.entry != focused {
+				t.Fatal("editor field navigation rebuilt the dialog and reset focus")
+			}
+		}
 		model.modal = nil
+	}
+}
+
+func TestEditorFormFieldsCanBeEditedNavigatedAndEscaped(t *testing.T) {
+	app := test.NewApp()
+	defer app.Quit()
+	window := app.NewWindow("test")
+	window.Resize(fyne.NewSize(900, 700))
+	model := NewModel()
+	template, err := config.DefaultTemplate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	model.startEditor(template)
+	model.openEditorForm(editorFormLevel, -1)
+	d := newTestDesktop(app, window, model)
+	d.render(true)
+
+	if d.entry == nil || d.entry.AcceptsTab() {
+		t.Fatal("editor text field cannot hand Tab navigation to other fields")
+	}
+	window.Canvas().Focus(d.keys)
+	entryPosition, found := canvasPositionOf(window.Canvas().Content(), d.entry, fyne.NewPos(0, 0))
+	if !found {
+		t.Fatal("could not locate editor field on canvas")
+	}
+	test.TapCanvas(window.Canvas(), fyne.NewPos(entryPosition.X+1, entryPosition.Y+d.entry.Size().Height/2))
+	if window.Canvas().Focused() == d.keys {
+		t.Fatalf("single click did not focus the field; focused=%T", window.Canvas().Focused())
+	}
+	if d.entry.CursorColumn != 0 || d.entry.SelectedText() != "" {
+		t.Fatalf("single click did not place cursor without selecting text: column=%d selection=%q", d.entry.CursorColumn, d.entry.SelectedText())
+	}
+	d.entry.SetText("")
+	test.Type(d.entry, "15m")
+	if model.modal.formValues["duration"] != "15m" {
+		t.Fatalf("edited duration = %q", model.modal.formValues["duration"])
+	}
+	d.entry.TypedKey(&fyne.KeyEvent{Name: fyne.KeyEscape})
+	if model.modal != nil {
+		t.Fatal("Esc did not close the form while a text field had focus")
+	}
+	model.openEditorForm(editorFormLevel, -1)
+	d.render(true)
+	focused := window.Canvas().Focused()
+	window.Canvas().FocusNext()
+	if window.Canvas().Focused() == nil || window.Canvas().Focused() == focused {
+		t.Fatal("Tab navigation did not select another editor field")
+	}
+	var selectControl *widget.Select
+	for i := 0; i < 20; i++ {
+		if control, ok := window.Canvas().Focused().(*widget.Select); ok {
+			selectControl = control
+			control.SetSelected(string(config.AntePerPlayer))
+			break
+		}
+		window.Canvas().FocusNext()
+	}
+	if selectControl == nil || model.modal.formValues["ante_kind"] != string(config.AntePerPlayer) {
+		t.Fatal("Tab navigation could not reach or change the ante selector")
+	}
+	test.Tap(selectControl)
+	if window.Canvas().Overlays().Top() == nil {
+		t.Fatal("ante dropdown did not open visibly")
+	}
+	if focused := window.Canvas().Focused(); focused == nil {
+		t.Fatal("opening the dropdown did not focus its popup")
+	} else {
+		focused.TypedKey(&fyne.KeyEvent{Name: fyne.KeyEscape})
+	}
+	if window.Canvas().Overlays().Top() != nil || model.modal == nil {
+		t.Fatal("Esc did not dismiss the dropdown while preserving its editor form")
 	}
 }
 
@@ -165,8 +249,11 @@ func TestDesktopWelcomeKeyboardNavigationAndShortcuts(t *testing.T) {
 	d := newTestDesktop(app, window, model)
 	window.Resize(fyne.NewSize(1280, 800))
 	d.render(true)
-	for i := 1; i < len(d.startupButtons); i++ {
-		if d.startupButtons[i].Position().Y <= d.startupButtons[i-1].Position().Y {
+	for i, button := range d.startupButtons {
+		if button.Size().Width > 500 {
+			t.Fatalf("welcome button %d width = %v, want narrow column", i, button.Size().Width)
+		}
+		if i > 0 && button.Position().Y <= d.startupButtons[i-1].Position().Y {
 			t.Fatal("welcome buttons are not arranged vertically")
 		}
 	}
@@ -330,6 +417,8 @@ func TestDualDisplayShowsReadOnlyClockAndTogglesWithMainWindow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	model.summary.ActivePlayers = 3
+	model.placePrizes = []domain.PlacePrize{{Place: 1, AmountCents: 100}, {Place: 2, AmountCents: 50}}
 	d := newTestDesktop(app, window, model)
 	d.render(true)
 	window.SetFullScreen(true)
@@ -340,16 +429,54 @@ func TestDualDisplayShowsReadOnlyClockAndTogglesWithMainWindow(t *testing.T) {
 	if window.FullScreen() || d.dualWindow.FullScreen() {
 		t.Fatal("opening dual display should leave both windows windowed")
 	}
-	if d.dualHome.timer == nil || d.dualHome.prizeRows == nil || d.dualHome.chipLegendView == nil || len(d.dualHome.actions) != 0 {
-		t.Fatal("dual display is missing clock/prizes/chips or contains actions")
+	if d.dualHome.timer == nil || d.dualHome.timer.text.TextSize < 80 || d.dualHome.blinds.text.TextSize < 88 || d.dualHome.prizeRows == nil || len(d.dualHome.prizeRows.Objects) != 2 || d.dualHome.chipLegendView == nil || d.dualHome.entrants.SizeName == "" || !d.dualHome.chipLegendView.Objects[0].(*fyne.Container).Objects[0].(*fyne.Container).Objects[0].(*chipToken).large || !d.dualHome.dualOneLine || len(d.dualHome.nextBreak.parts) != 8 || d.dualHome.nextBreak.maxTextSize != 21 || d.dualHome.nextLevel.maxTextSize != 21 || len(d.dualHome.actions) != 0 {
+		t.Fatalf("dual display is missing enlarged clock, split prize/chip columns, or contains actions: timer=%v blinds=%v prizes=%d chip=%v info=%q chipSize=%v lines=%v/%v actions=%d", d.dualHome.timer.text.TextSize, d.dualHome.blinds.text.TextSize, len(d.dualHome.prizeRows.Objects), d.dualHome.chipLegendView != nil, d.dualHome.entrants.SizeName, d.dualHome.chipLegendView.Objects[0].(*fyne.Container).Objects[0].(*fyne.Container).Objects[0].(*chipToken).large, d.dualHome.nextBreak.maxTextSize, d.dualHome.nextLevel.maxTextSize, len(d.dualHome.actions))
 	}
-	d.toggleFullScreen()
+	leftPosition, leftFound := canvasPositionOf(d.dualWindow.Content(), d.dualHome.entrants, fyne.NewPos(0, 0))
+	rightPosition, rightFound := canvasPositionOf(d.dualWindow.Content(), d.dualHome.prizeRows, fyne.NewPos(0, 0))
+	localClockPosition, localClockFound := canvasPositionOf(d.dualWindow.Content(), d.dualHome.localTime, fyne.NewPos(0, 0))
+	fullscreenPosition, fullscreenFound := canvasPositionOf(d.dualWindow.Content(), d.dualFullscreen, fyne.NewPos(0, 0))
+	closePosition, closeFound := canvasPositionOf(d.dualWindow.Content(), d.dualClose, fyne.NewPos(0, 0))
+	if !leftFound || !rightFound || leftPosition.X < 16 || leftPosition.X >= rightPosition.X {
+		t.Fatalf("dual information columns are not split left/right: left=%v right=%v", leftPosition, rightPosition)
+	}
+	if !localClockFound || !fullscreenFound || !closeFound || !(localClockPosition.X < fullscreenPosition.X && fullscreenPosition.X < closePosition.X) || d.dualFullscreen.Text != "⛶  F11" {
+		t.Fatalf("dual footer positions/icon = %v / %v / %v (%q)", localClockPosition, fullscreenPosition, closePosition, d.dualFullscreen.Text)
+	}
+	renderer := d.dualHome.nextBreak.CreateRenderer().(*coloredLineRenderer)
+	renderer.Layout(d.dualHome.nextBreak.Size())
+	if d.dualHome.nextBreak.parts[0].text != "NEXT BREAK" || d.dualHome.nextBreak.parts[3].text != "AVG. STACK" || d.dualHome.nextBreak.parts[6].text != "NEXT BLINDS" {
+		t.Fatalf("dual next-info line labels = %+v", d.dualHome.nextBreak.parts)
+	}
+	if renderer.texts[1].TextSize > 64 || renderer.texts[1].TextSize < 20 || renderer.texts[1].TextSize != renderer.texts[4].TextSize || renderer.texts[1].TextSize != renderer.texts[7].TextSize || renderer.texts[0].TextSize < 16 || renderer.texts[0].TextSize > 21 || renderer.texts[3].TextSize < 16 || renderer.texts[3].TextSize > 21 || renderer.texts[6].TextSize < 16 || renderer.texts[6].TextSize > 21 || renderer.texts[1].TextStyle.Monospace || renderer.texts[4].TextStyle.Monospace || renderer.texts[7].TextStyle.Monospace {
+		t.Fatalf("dual next-info fonts = labels %v/%v/%v, values %v/%v/%v", renderer.texts[0].TextSize, renderer.texts[3].TextSize, renderer.texts[6].TextSize, renderer.texts[1].TextSize, renderer.texts[4].TextSize, renderer.texts[7].TextSize)
+	}
+	chip := d.dualHome.chipLegendView.Objects[0].(*fyne.Container).Objects[0].(*fyne.Container).Objects[0].(*chipToken)
+	if chip.MinSize() != fyne.NewSize(72, 72) || chip.CreateRenderer().(*chipTokenRenderer).label.TextSize != 20 {
+		t.Fatalf("RO chip size/text = %v/%v", chip.MinSize(), chip.CreateRenderer().(*chipTokenRenderer).label.TextSize)
+	}
+	chipsPanel := d.dualHome.section("Chips", d.dualHome.chipLegendView).(*fyne.Container)
+	if chipsPanel.Objects[0].(*canvas.Text).TextSize != 26 {
+		t.Fatalf("RO Chips heading size = %v, want 26", chipsPanel.Objects[0].(*canvas.Text).TextSize)
+	}
+	gaps := []float32{
+		renderer.texts[1].Position().X - (renderer.texts[0].Position().X + renderer.texts[0].Size().Width),
+		renderer.texts[2].Position().X - (renderer.texts[1].Position().X + renderer.texts[1].Size().Width),
+		renderer.texts[3].Position().X - (renderer.texts[2].Position().X + renderer.texts[2].Size().Width),
+	}
+	if gaps[0] <= 0 || gaps[0]-gaps[1] > 1 || gaps[1]-gaps[0] > 1 || gaps[0]-gaps[2] > 1 || gaps[2]-gaps[0] > 1 {
+		t.Fatalf("dual info spacing attr/value, value/dot, dot/attr = %v", gaps)
+	}
+	if button := d.home.actions['d']; button == nil || button.Importance != widget.HighImportance {
+		t.Fatal("dual-screen action was not highlighted while enabled")
+	}
+	d.dualWindow.Canvas().Focused().TypedKey(&fyne.KeyEvent{Name: fyne.KeyF11})
 	if !window.FullScreen() || !d.dualWindow.FullScreen() {
-		t.Fatal("fullscreen toggle did not apply to both windows")
+		t.Fatal("F11 from the dual window did not fullscreen both windows")
 	}
-	d.dispatchKeyEvent(&fyne.KeyEvent{Name: fyne.KeyF11})
+	window.Canvas().Focused().TypedKey(&fyne.KeyEvent{Name: fyne.KeyF11})
 	if window.FullScreen() || d.dualWindow.FullScreen() {
-		t.Fatal("F11 did not leave fullscreen on both windows")
+		t.Fatal("F11 from the main window did not leave fullscreen on both windows")
 	}
 	if d.dualFullscreen == nil || d.dualClose == nil {
 		t.Fatal("dual display is missing fullscreen and close buttons")
@@ -360,12 +487,46 @@ func TestDualDisplayShowsReadOnlyClockAndTogglesWithMainWindow(t *testing.T) {
 	}
 	firstWindow := d.dualWindow
 	test.Tap(d.dualClose)
-	if d.dualVisible || !window.FullScreen() {
+	if d.dualVisible || !window.FullScreen() || d.dualWindow.FullScreen() {
 		t.Fatal("closing the fullscreen dual display should hide it without exiting main fullscreen")
 	}
 	d.activate('d')
 	if !d.dualVisible || d.dualWindow != firstWindow || window.FullScreen() || d.dualWindow.FullScreen() {
 		t.Fatal("reopening dual display did not reuse its window in windowed mode")
+	}
+	window.SetFullScreen(true)
+	d.dualWindow.SetFullScreen(true)
+	window.Canvas().Focus(d.keys)
+	d.keys.TypedRune('d')
+	if d.dualVisible || !window.FullScreen() || d.dualWindow.FullScreen() {
+		t.Fatal("D did not close dual display while the main window was fullscreen")
+	}
+	d.activate('d')
+	window.SetFullScreen(true)
+	d.dualWindow.SetFullScreen(true)
+	d.dualWindow.Canvas().Focus(d.dualKeys)
+	d.dualKeys.TypedRune('c')
+	if d.dualVisible || !window.FullScreen() || d.dualWindow.FullScreen() {
+		t.Fatal("C did not close dual display while fullscreen")
+	}
+	if button := d.home.actions['d']; button == nil || button.Importance == widget.HighImportance {
+		t.Fatal("dual-screen action stayed highlighted after closing")
+	}
+}
+
+func TestMainDashboardRenderReusesViewWithoutModal(t *testing.T) {
+	app := test.NewApp()
+	defer app.Quit()
+	window := app.NewWindow("test")
+	model, database, _ := newRunningModel(t)
+	defer database.Close()
+	model.screen = screenMain
+	d := newTestDesktop(app, window, model)
+	d.render(true)
+	home := d.home
+	d.render(true)
+	if d.home != home {
+		t.Fatal("dashboard render rebuilt the view despite no modal or screen change")
 	}
 }
 
@@ -703,6 +864,17 @@ func TestAverageStackRoundsDownToSmallestConfiguredChip(t *testing.T) {
 	}
 }
 
+func TestChipLegendSortsByValue(t *testing.T) {
+	values := []config.ChipValue{{Value: 25, Color: "red"}, {Value: 5, Color: "white"}, {Value: 100, Color: "black"}}
+	var got []string
+	for _, token := range chipTokens(values, nil) {
+		got = append(got, token.(*chipToken).value)
+	}
+	if strings.Join(got, ",") != "5,25,100" {
+		t.Fatalf("chip token order = %v", got)
+	}
+}
+
 func TestDesktopChipLegendUsesConfiguredValuesAndColors(t *testing.T) {
 	template, err := config.DefaultTemplate()
 	if err != nil {
@@ -866,6 +1038,32 @@ func TestUserErrorFormattingRemovesInternalEventPrefix(t *testing.T) {
 	if got != "Initial buy-in registration is closed:" {
 		t.Fatalf("formatted error = %q", got)
 	}
+}
+
+func canvasPositionOf(object, target fyne.CanvasObject, parent fyne.Position) (fyne.Position, bool) {
+	position := fyne.NewPos(parent.X+object.Position().X, parent.Y+object.Position().Y)
+	if object == target {
+		return position, true
+	}
+	switch value := object.(type) {
+	case *fyne.Container:
+		for _, child := range value.Objects {
+			if found, ok := canvasPositionOf(child, target, position); ok {
+				return found, true
+			}
+		}
+	case *container.Scroll:
+		if value.Content != nil {
+			return canvasPositionOf(value.Content, target, position)
+		}
+	case fyne.Widget:
+		for _, child := range value.CreateRenderer().Objects() {
+			if found, ok := canvasPositionOf(child, target, position); ok {
+				return found, true
+			}
+		}
+	}
+	return fyne.Position{}, false
 }
 
 func newTestDesktop(app fyne.App, window fyne.Window, model *Model) *desktop {

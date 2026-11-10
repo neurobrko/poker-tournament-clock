@@ -72,6 +72,86 @@ func TestTournamentEditorBuildsStructuredTemplateDraft(t *testing.T) {
 	}
 }
 
+func TestTournamentEditorConfirmsLevelAndPlayerRemoval(t *testing.T) {
+	model := NewModel()
+	template, err := config.DefaultTemplate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	template.Players = []config.Player{{Name: "Alice"}}
+	model.startEditor(template)
+
+	scheduleCount := len(model.editorTemplate.Schedule)
+	model.confirmEditorRemoval(0, editorFormLevel, "Level 1")
+	if model.modal == nil || model.modal.confirm != confirmRemoveEditorItem || len(model.editorTemplate.Schedule) != scheduleCount {
+		t.Fatal("level was removed without confirmation")
+	}
+	model.onKey(keyEvent{Type: keyEsc})
+	if len(model.editorTemplate.Schedule) != scheduleCount {
+		t.Fatal("cancelling level removal changed the schedule")
+	}
+	model.confirmEditorRemoval(0, editorFormLevel, "Level 1")
+	model.onKey(keyEvent{Type: keyEnter})
+	if len(model.editorTemplate.Schedule) != scheduleCount-1 {
+		t.Fatal("confirmed level removal did not update the schedule")
+	}
+
+	model.confirmEditorRemoval(0, editorFormPlayer, "Alice")
+	if model.modal == nil || model.modal.confirm != confirmRemoveEditorItem || len(model.editorTemplate.Players) != 1 {
+		t.Fatal("player was removed without confirmation")
+	}
+	model.onKey(keyEvent{Type: keyEnter})
+	if len(model.editorTemplate.Players) != 0 || !model.editorDirty {
+		t.Fatal("confirmed player removal did not update the draft")
+	}
+
+	chipCount, prizeCount := len(model.editorTemplate.ChipValues), len(model.editorTemplate.PrizeTiers)
+	model.confirmEditorRemoval(0, editorFormChip, "5 · white")
+	if model.modal == nil || len(model.editorTemplate.ChipValues) != chipCount {
+		t.Fatal("chip value was removed without confirmation")
+	}
+	model.onKey(keyEvent{Type: keyEnter})
+	model.confirmEditorRemoval(0, editorFormPrize, "2+ players")
+	if model.modal == nil || len(model.editorTemplate.PrizeTiers) != prizeCount || len(model.editorTemplate.ChipValues) != chipCount-1 {
+		t.Fatal("confirmed chip removal did not update the draft")
+	}
+	model.onKey(keyEvent{Type: keyEnter})
+	if len(model.editorTemplate.PrizeTiers) != prizeCount-1 {
+		t.Fatal("confirmed prize-tier removal did not update the draft")
+	}
+}
+
+func TestEditorDeadlineTargetNamesLevelOrBreak(t *testing.T) {
+	if got := editorDeadlineTargetLabel(string(config.DeadlineAtLevelStart)); got != "Deadline level number" {
+		t.Fatalf("level deadline label = %q", got)
+	}
+	if got := editorDeadlineTargetLabel(string(config.DeadlineAtBreakEnd)); got != "Deadline break number" {
+		t.Fatalf("break deadline label = %q", got)
+	}
+}
+
+func TestPrizeEditorRequiresPercentagesToSumTo100(t *testing.T) {
+	model := NewModel()
+	template, err := config.DefaultTemplate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	model.startEditor(template)
+	model.openEditorForm(editorFormPrize, 0)
+	original := append([]config.Percentage(nil), model.editorTemplate.PrizeTiers[0].Percentages...)
+	model.modal.formValues["percentages"] = "70, 20"
+	model.saveEditorForm(model.modal)
+	if model.modal == nil || !reflect.DeepEqual(model.editorTemplate.PrizeTiers[0].Percentages, original) {
+		t.Fatal("invalid prize percentages were accepted")
+	}
+	model.modal.formValues["percentages"] = "70, 30"
+	model.saveEditorForm(model.modal)
+	percentages := model.editorTemplate.PrizeTiers[0].Percentages
+	if model.modal != nil || len(percentages) != 2 || percentages[0] != "70" || percentages[1] != "30" {
+		t.Fatalf("valid percentages were not saved: %+v", percentages)
+	}
+}
+
 func TestTournamentEditorSavesNamelessTemplateAndCanCreateAfterSave(t *testing.T) {
 	model := NewModel()
 	template, err := config.DefaultTemplate()
@@ -470,6 +550,14 @@ func TestPlayerYAMLImportIsBlockedAfterTournamentStarts(t *testing.T) {
 		if player.Name == "Late player" {
 			t.Fatal("player was imported after tournament start")
 		}
+	}
+}
+
+func TestReminderDisplayTruncatesAfter99Characters(t *testing.T) {
+	long := strings.Repeat("界", 100)
+	_, got := segmentReminderLines(config.Segment{Reminder: long})
+	if want := strings.Repeat("界", 99) + "..."; got != want {
+		t.Fatalf("truncated reminder = %q, want %q", got, want)
 	}
 }
 

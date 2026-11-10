@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"math/big"
 	"os"
 	"strconv"
 	"strings"
@@ -81,8 +82,6 @@ func (m *Model) startEditor(template config.Template) {
 func (m *Model) handleEditorKey(key keyEvent) bool {
 	if key.Type == keyEsc {
 		m.leaveEditor()
-	} else if key.Type == keyRunes && strings.EqualFold(key.String(), "q") {
-		m.askQuit()
 	}
 	return false
 }
@@ -399,12 +398,24 @@ func parseEditorBool(value string) bool { return value == "true" }
 func parseEditorPercentages(value string) ([]config.Percentage, error) {
 	parts := strings.Split(value, ",")
 	percentages := make([]config.Percentage, 0, len(parts))
+	total := new(big.Rat)
+	var previous *big.Rat
 	for _, part := range parts {
 		part = strings.TrimSpace(part)
-		if part == "" {
-			return nil, fmt.Errorf("enter comma-separated percentages totaling 100")
+		var percentage config.Percentage
+		if part == "" || yaml.Unmarshal([]byte(part), &percentage) != nil {
+			return nil, fmt.Errorf("enter valid comma-separated percentages totaling 100")
 		}
-		percentages = append(percentages, config.Percentage(part))
+		value, _ := new(big.Rat).SetString(string(percentage))
+		if value.Sign() <= 0 || previous != nil && value.Cmp(previous) > 0 {
+			return nil, fmt.Errorf("prize percentages must be positive and non-increasing by place")
+		}
+		total.Add(total, value)
+		percentages = append(percentages, percentage)
+		previous = value
+	}
+	if total.Cmp(big.NewRat(100, 1)) != 0 {
+		return nil, fmt.Errorf("prize percentages must sum exactly to 100%%")
 	}
 	return percentages, nil
 }
@@ -459,15 +470,16 @@ func editorPrice(price config.EuroCents) string {
 
 func (d *desktop) editorView() fyne.CanvasObject {
 	title := sectionLabel("TOURNAMENT EDITOR")
-	name := widget.NewEntry()
-	name.SetPlaceHolder("Tournament name (required to create)")
-	name.SetText(d.model.editorName)
-	name.OnChanged = func(value string) { d.model.editorName, d.model.editorDirty = value, true }
-	d.entry = &desktopEntry{Entry: name, escape: func() { d.dispatchKey(keyEvent{Type: keyEsc}) }, fullscreen: d.toggleFullScreen}
+	d.entry = newDesktopEntry()
+	d.entry.SetPlaceHolder("Tournament name (required to create)")
+	d.entry.SetText(d.model.editorName)
+	d.entry.OnChanged = func(value string) { d.model.editorName, d.model.editorDirty = value, true }
+	d.entry.escape = func() { d.dispatchKey(keyEvent{Type: keyEsc}) }
+	d.entry.fullscreen = d.toggleFullScreen
 
 	purchaseSummary := fmt.Sprintf("Buy-in %s / %d chips · Rebuy %s / %d · Add-on %s / %d", editorPrice(d.model.editorTemplate.Purchases.InitialBuyIn.Price), d.model.editorTemplate.Purchases.InitialBuyIn.Chips, editorPrice(d.model.editorTemplate.Purchases.Rebuy.Price), d.model.editorTemplate.Purchases.Rebuy.Chips, editorPrice(d.model.editorTemplate.Purchases.AddOn.Price), d.model.editorTemplate.Purchases.AddOn.Chips)
 	registrationSummary := fmt.Sprintf("Rebuys %t · deadline %s #%d · add-ons %t at break #%d", d.model.editorTemplate.Registration.RebuysEnabled, d.model.editorTemplate.Registration.RegistrationDeadline.At, d.model.editorTemplate.Registration.RegistrationDeadline.Target, d.model.editorTemplate.Registration.AddOnsEnabled, d.model.editorTemplate.Registration.AddOnBreak)
-	purchaseEdit := d.newButton("Edit purchases and registration", func() { d.model.openEditorForm(editorFormPurchases, -1); d.render(true) })
+	purchaseEdit := narrowEditorButton(d.newButton("Edit purchases and registration", func() { d.model.openEditorForm(editorFormPurchases, -1); d.render(true) }), 280)
 
 	rows := make([]fyne.CanvasObject, 0, len(d.model.editorTemplate.Schedule)+2)
 	levelNo, breakNo := 0, 0
@@ -480,6 +492,9 @@ func (d *desktop) editorView() fyne.CanvasObject {
 		} else {
 			breakNo++
 			label = fmt.Sprintf("Break %d · %s · %s · chip up %d", breakNo, segment.Label, time.Duration(segment.Duration), segment.ChipUp)
+		}
+		if reminder := truncateReminder(strings.TrimSpace(segment.Reminder)); reminder != "" {
+			label += " · " + reminder
 		}
 		purpose := editorFormLevel
 		if segment.Kind == config.SegmentBreak {
@@ -494,8 +509,7 @@ func (d *desktop) editorView() fyne.CanvasObject {
 			down.Disable()
 		}
 		rows = append(rows, editorRow(label, up, down, d.newButton("Edit", func() { d.model.openEditorForm(purpose, index); d.render(true) }), d.newButton("Remove", func() {
-			d.model.editorTemplate.Schedule = append(d.model.editorTemplate.Schedule[:index], d.model.editorTemplate.Schedule[index+1:]...)
-			d.model.editorDirty = true
+			d.model.confirmEditorRemoval(index, purpose, label)
 			d.render(true)
 		})))
 	}
@@ -506,18 +520,20 @@ func (d *desktop) editorView() fyne.CanvasObject {
 	if len(d.model.editorTemplate.Schedule) == 0 || d.model.editorTemplate.Schedule[len(d.model.editorTemplate.Schedule)-1].Kind != config.SegmentLevel {
 		addBreak.Disable()
 	}
-	rows = append(rows, container.NewHBox(d.newButton("Add level", func() { d.model.openEditorForm(editorFormLevel, -1); d.render(true) }), addBreak))
+	rows = append(rows, container.NewCenter(container.NewHBox(
+		narrowEditorButton(d.newButton("Add level", func() { d.model.openEditorForm(editorFormLevel, -1); d.render(true) }), 180),
+		narrowEditorButton(addBreak, 180),
+	)))
 
 	chipRows := make([]fyne.CanvasObject, 0, len(d.model.editorTemplate.ChipValues)+1)
 	for index, chip := range d.model.editorTemplate.ChipValues {
 		index, chip := index, chip
 		chipRows = append(chipRows, editorRow(fmt.Sprintf("%d · %s", chip.Value, chip.Color), d.newButton("Edit", func() { d.model.openEditorForm(editorFormChip, index); d.render(true) }), d.newButton("Remove", func() {
-			d.model.editorTemplate.ChipValues = append(d.model.editorTemplate.ChipValues[:index], d.model.editorTemplate.ChipValues[index+1:]...)
-			d.model.editorDirty = true
+			d.model.confirmEditorRemoval(index, editorFormChip, fmt.Sprintf("%d · %s", chip.Value, chip.Color))
 			d.render(true)
 		})))
 	}
-	chipRows = append(chipRows, d.newButton("Add chip value", func() { d.model.openEditorForm(editorFormChip, -1); d.render(true) }))
+	chipRows = append(chipRows, narrowEditorButton(d.newButton("Add chip value", func() { d.model.openEditorForm(editorFormChip, -1); d.render(true) }), 180))
 
 	playerRows := make([]fyne.CanvasObject, 0, len(d.model.editorTemplate.Players)+1)
 	for index, player := range d.model.editorTemplate.Players {
@@ -527,12 +543,11 @@ func (d *desktop) editorView() fyne.CanvasObject {
 			label += " (" + player.Alias + ")"
 		}
 		playerRows = append(playerRows, editorRow(label, d.newButton("Edit", func() { d.model.openEditorForm(editorFormPlayer, index); d.render(true) }), d.newButton("Remove", func() {
-			d.model.editorTemplate.Players = append(d.model.editorTemplate.Players[:index], d.model.editorTemplate.Players[index+1:]...)
-			d.model.editorDirty = true
+			d.model.confirmEditorRemoval(index, editorFormPlayer, label)
 			d.render(true)
 		})))
 	}
-	playerRows = append(playerRows, d.newButton("Add player", func() { d.model.openEditorForm(editorFormPlayer, -1); d.render(true) }))
+	playerRows = append(playerRows, narrowEditorButton(d.newButton("Add player", func() { d.model.openEditorForm(editorFormPlayer, -1); d.render(true) }), 180))
 
 	prizeRows := make([]fyne.CanvasObject, 0, len(d.model.editorTemplate.PrizeTiers)+1)
 	for index, prize := range d.model.editorTemplate.PrizeTiers {
@@ -542,18 +557,17 @@ func (d *desktop) editorView() fyne.CanvasObject {
 			percentages[i] = string(percentage)
 		}
 		prizeRows = append(prizeRows, editorRow(fmt.Sprintf("%d+ players · %s%%", prize.MinPlayers, strings.Join(percentages, "/")), d.newButton("Edit", func() { d.model.openEditorForm(editorFormPrize, index); d.render(true) }), d.newButton("Remove", func() {
-			d.model.editorTemplate.PrizeTiers = append(d.model.editorTemplate.PrizeTiers[:index], d.model.editorTemplate.PrizeTiers[index+1:]...)
-			d.model.editorDirty = true
+			d.model.confirmEditorRemoval(index, editorFormPrize, fmt.Sprintf("%d+ players", prize.MinPlayers))
 			d.render(true)
 		})))
 	}
-	prizeRows = append(prizeRows, d.newButton("Add prize tier", func() { d.model.openEditorForm(editorFormPrize, -1); d.render(true) }))
+	prizeRows = append(prizeRows, narrowEditorButton(d.newButton("Add prize tier", func() { d.model.openEditorForm(editorFormPrize, -1); d.render(true) }), 180))
 
 	createAfter := widget.NewCheck("Create tournament after saving template", func(value bool) { d.model.editorAfterSave = value })
 	createAfter.SetChecked(d.model.editorAfterSave)
 	content := container.NewVBox(
 		d.statusNotice(),
-		compactSection("Tournament name", name),
+		compactSection("Tournament name", d.entry),
 		compactSection("Purchases and registration", container.NewVBox(widget.NewLabel(purchaseSummary), widget.NewLabel(registrationSummary), purchaseEdit)),
 		compactSection("Blind schedule", container.NewVBox(rows...)),
 		compactSection("Chip values", container.NewVBox(chipRows...)),
@@ -561,14 +575,37 @@ func (d *desktop) editorView() fyne.CanvasObject {
 		compactSection("Prize tiers", container.NewVBox(prizeRows...)),
 		mutedLabel("Templates remain nameless. Add levels and breaks in order; settings are validated when saved or created."),
 	)
-	scroll := container.NewVScroll(content)
+	scroll := container.NewVScroll(container.New(windowSideInsetLayout{inset: 24}, content))
 	scroll.Direction = container.ScrollVerticalOnly
 	back := d.newButton("Back", func() { d.model.leaveEditor(); d.render(true) })
 	save := d.newButton("Save template", func() { d.model.saveEditorTemplate(); d.render(true) })
 	create := d.newButton("Create tournament", func() { d.model.createEditorTournament(); d.render(true) })
 	create.Importance = widget.HighImportance
 	footer := container.NewPadded(container.NewHBox(back, createAfter, layout.NewSpacer(), save, create))
-	return container.NewBorder(container.NewPadded(title), footer, nil, nil, container.New(windowSideInsetLayout{inset: 16}, scroll))
+	return container.NewBorder(container.NewPadded(title), footer, nil, nil, scroll)
+}
+
+func (m *Model) confirmEditorRemoval(index int, purpose dialogPurpose, label string) {
+	item := "level"
+	switch purpose {
+	case editorFormPlayer:
+		item = "player"
+	case editorFormBreak:
+		item = "break"
+	case editorFormChip:
+		item = "chip value"
+	case editorFormPrize:
+		item = "prize tier"
+	}
+	m.modal = &dialog{
+		kind: dialogConfirm, title: "Remove " + item + "?",
+		message: fmt.Sprintf("Remove %q from this tournament draft?", label),
+		confirm: confirmRemoveEditorItem, purpose: purpose, editorIndex: index,
+	}
+}
+
+func narrowEditorButton(button *widget.Button, width float32) fyne.CanvasObject {
+	return container.NewCenter(container.New(&widthLimitLayout{width: width}, button))
 }
 
 func editorRow(label string, buttons ...fyne.CanvasObject) fyne.CanvasObject {
@@ -584,7 +621,7 @@ func editorFields(purpose dialogPurpose) []editorField {
 			{key: "addon_price", label: "Add-on price (€)"}, {key: "addon_chips", label: "Add-on chips"},
 			{key: "rebuys_enabled", label: "Rebuys enabled", kind: editorCheckField},
 			{key: "deadline_at", label: "Registration closes", kind: editorSelectField, options: []string{string(config.DeadlineAtLevelStart), string(config.DeadlineAtBreakStart), string(config.DeadlineAtBreakEnd)}},
-			{key: "deadline_target", label: "Deadline segment number"},
+			{key: "deadline_target", label: "Deadline level/break number"},
 			{key: "addons_enabled", label: "Add-ons enabled", kind: editorCheckField}, {key: "addon_break", label: "Add-on break number"},
 		}
 	case editorFormLevel:
@@ -606,10 +643,18 @@ func editorFields(purpose dialogPurpose) []editorField {
 	}
 }
 
+func editorDeadlineTargetLabel(at string) string {
+	if config.DeadlineAt(at) == config.DeadlineAtLevelStart {
+		return "Deadline level number"
+	}
+	return "Deadline break number"
+}
+
 func (d *desktop) editorFormDialog(modal *dialog) fyne.CanvasObject {
 	fields := editorFields(modal.purpose)
-	rows := make([]fyne.CanvasObject, 0, len(fields)+1)
+	rows := make([]fyne.CanvasObject, 0, len(fields))
 	firstEntry := true
+	var deadlineTargetLabel *widget.Label
 	for _, field := range fields {
 		field := field
 		switch field.kind {
@@ -618,28 +663,40 @@ func (d *desktop) editorFormDialog(modal *dialog) fyne.CanvasObject {
 			check.SetChecked(parseEditorBool(modal.formValues[field.key]))
 			rows = append(rows, check)
 		case editorSelectField:
-			selectField := widget.NewSelect(field.options, func(value string) { modal.formValues[field.key] = value })
+			selectField := widget.NewSelect(field.options, func(value string) {
+				modal.formValues[field.key] = value
+				if field.key == "deadline_at" && deadlineTargetLabel != nil {
+					deadlineTargetLabel.SetText(editorDeadlineTargetLabel(value))
+				}
+			})
 			selectField.SetSelected(modal.formValues[field.key])
 			rows = append(rows, container.NewBorder(nil, nil, widget.NewLabel(field.label), nil, selectField))
 		default:
-			entry := widget.NewEntry()
-			entry.SetPlaceHolder(field.label)
-			entry.SetText(modal.formValues[field.key])
-			entry.OnChanged = func(value string) { modal.formValues[field.key] = value }
-			entry.OnSubmitted = func(string) { d.dispatchKey(keyEvent{Type: keyEnter}) }
-			wrapped := &desktopEntry{Entry: entry, escape: func() { d.closeModal() }, fullscreen: d.toggleFullScreen}
+			wrapped := newDesktopEntry()
+			wrapped.SetPlaceHolder(field.label)
+			wrapped.SetText(modal.formValues[field.key])
+			wrapped.OnChanged = func(value string) { modal.formValues[field.key] = value }
+			wrapped.OnSubmitted = func(string) { d.dispatchKey(keyEvent{Type: keyEnter}) }
+			wrapped.escape = func() { d.dispatchKey(keyEvent{Type: keyEsc}) }
+			wrapped.fullscreen = d.toggleFullScreen
 			if firstEntry {
 				d.entry = wrapped
 				firstEntry = false
 			}
-			rows = append(rows, container.NewBorder(nil, nil, widget.NewLabel(field.label), nil, wrapped))
+			label := widget.NewLabel(field.label)
+			if field.key == "deadline_target" {
+				deadlineTargetLabel = label
+				label.SetText(editorDeadlineTargetLabel(modal.formValues["deadline_at"]))
+			}
+			rows = append(rows, container.NewBorder(nil, nil, label, nil, wrapped))
 		}
 	}
+	scroll := container.NewVScroll(container.New(windowSideInsetLayout{inset: 12}, container.NewVBox(rows...)))
+	scroll.Direction = container.ScrollVerticalOnly
 	save := d.modalButton("Save", func() { d.dispatchKey(keyEvent{Type: keyEnter}) })
 	save.Importance = widget.HighImportance
 	cancel := d.modalButton("Cancel", func() { d.closeModal() })
-	rows = append(rows, container.NewHBox(layout.NewSpacer(), cancel, save))
-	scroll := container.NewVScroll(container.NewVBox(rows...))
-	scroll.Direction = container.ScrollVerticalOnly
-	return scroll
+	footer := container.NewHBox(layout.NewSpacer(), cancel, save)
+	body := container.New(&minimumHeightLayout{height: 360}, scroll)
+	return container.NewBorder(nil, footer, nil, nil, body)
 }

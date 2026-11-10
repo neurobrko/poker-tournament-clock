@@ -99,6 +99,7 @@ const (
 	confirmCorrectBust
 	confirmSelectSegment
 	confirmDiscardEditor
+	confirmRemoveEditorItem
 )
 
 type dialog struct {
@@ -552,6 +553,41 @@ func (m *Model) confirmAction(d *dialog) bool {
 		m.screen = screenStartup
 		m.editorDirty = false
 		m.setStatus(nil, false)
+	case confirmRemoveEditorItem:
+		var err error
+		switch d.purpose {
+		case editorFormLevel, editorFormBreak:
+			if d.editorIndex < 0 || d.editorIndex >= len(m.editorTemplate.Schedule) {
+				err = fmt.Errorf("schedule item no longer exists")
+			} else {
+				m.editorTemplate.Schedule = append(m.editorTemplate.Schedule[:d.editorIndex], m.editorTemplate.Schedule[d.editorIndex+1:]...)
+			}
+		case editorFormPlayer:
+			if d.editorIndex < 0 || d.editorIndex >= len(m.editorTemplate.Players) {
+				err = fmt.Errorf("player no longer exists")
+			} else {
+				m.editorTemplate.Players = append(m.editorTemplate.Players[:d.editorIndex], m.editorTemplate.Players[d.editorIndex+1:]...)
+			}
+		case editorFormChip:
+			if d.editorIndex < 0 || d.editorIndex >= len(m.editorTemplate.ChipValues) {
+				err = fmt.Errorf("chip value no longer exists")
+			} else {
+				m.editorTemplate.ChipValues = append(m.editorTemplate.ChipValues[:d.editorIndex], m.editorTemplate.ChipValues[d.editorIndex+1:]...)
+			}
+		case editorFormPrize:
+			if d.editorIndex < 0 || d.editorIndex >= len(m.editorTemplate.PrizeTiers) {
+				err = fmt.Errorf("prize tier no longer exists")
+			} else {
+				m.editorTemplate.PrizeTiers = append(m.editorTemplate.PrizeTiers[:d.editorIndex], m.editorTemplate.PrizeTiers[d.editorIndex+1:]...)
+			}
+		}
+		if err != nil {
+			m.setStatus(err, true)
+			return false
+		}
+		m.modal = nil
+		m.editorDirty = true
+		m.setStatus("Tournament draft updated.", false)
 	}
 	if m.suspendedModal != nil && m.modal == nil {
 		m.modal, m.suspendedModal = m.suspendedModal, nil
@@ -774,6 +810,10 @@ func busteeGroups(order []string, tied map[string]bool) [][]string {
 		index = end
 	}
 	return groups
+}
+
+func bustPlacesVisible(model *Model) bool {
+	return !model.record.Config.Registration.RebuysEnabled || model.record.RegistrationClosed || model.record.Status == store.StatusEnded
 }
 
 func busteeFinishingLabels(activeBefore int, order []string, tied map[string]bool) map[string]string {

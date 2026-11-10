@@ -2,6 +2,8 @@ package ui
 
 import (
 	"fmt"
+	"log"
+	"os"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -69,6 +71,8 @@ type desktop struct {
 	home           *desktopHome
 	dualWindow     fyne.Window
 	dualHome       *desktopHome
+	dualKeys       *desktopKeySink
+	dualTitle      string
 	dualFullscreen *widget.Button
 	dualClose      *widget.Button
 	dualVisible    bool
@@ -81,6 +85,7 @@ type desktop struct {
 	browserButtons []*widget.Button
 	lastScreen     screen
 	lastHasDB      bool
+	lastModal      bool
 	closed         atomic.Bool
 }
 
@@ -103,8 +108,8 @@ func (d *desktop) clockLoop(stop <-chan struct{}) {
 					return
 				}
 				if d.model.screen == screenMain && d.home != nil {
-					d.home.refresh(d.model)
-					d.refreshDualDisplay()
+					d.home.refreshClock(d.model)
+					d.refreshDualClock()
 					if d.model.modal != nil {
 						d.disableBackgroundControls()
 					}
@@ -114,14 +119,16 @@ func (d *desktop) clockLoop(stop <-chan struct{}) {
 	}
 }
 
-func (d *desktop) render(force bool) {
+func (d *desktop) render(_ bool) {
 	if d.closed.Load() {
 		return
 	}
 	m := d.model
-	if !force && m.modal == nil && m.browser == nil && m.screen == screenMain && d.home != nil && d.lastScreen == m.screen && d.lastHasDB == (m.database != nil) {
+	if m.modal == nil && m.browser == nil && m.screen == screenMain && d.home != nil && d.lastScreen == m.screen && d.lastHasDB == (m.database != nil) && !d.lastModal {
+		d.home.dualVisible = d.dualVisible
 		d.home.refresh(m)
 		d.refreshDualDisplay()
+		d.window.Canvas().Focus(d.keys)
 		return
 	}
 
@@ -164,6 +171,7 @@ func (d *desktop) render(force bool) {
 		d.scrollModalSelection(m.modal.cursor)
 	}
 	d.lastScreen, d.lastHasDB = m.screen, m.database != nil
+	d.lastModal = m.modal != nil
 	d.refreshDualDisplay()
 	if d.entry != nil {
 		d.window.Canvas().Focus(d.entry)
@@ -299,6 +307,21 @@ func (d *desktop) dispatchKeyEvent(event *fyne.KeyEvent) {
 	if event == nil {
 		return
 	}
+	if event.Name == fyne.KeyF11 {
+		d.debugf("F11 event: screen=%d focused=%T fullscreen=%t dual=%t", d.model.screen, d.window.Canvas().Focused(), d.window.FullScreen(), d.dualVisible)
+	}
+	if d.model.screen == screenEditor && d.model.browser == nil && (d.model.modal == nil || d.model.modal.kind == dialogEditorForm) {
+		switch event.Name {
+		case fyne.KeyF11:
+			d.toggleFullScreen()
+			return
+		case fyne.KeyEscape:
+			d.dispatchKey(keyEvent{Type: keyEsc})
+			return
+		default:
+			return
+		}
+	}
 	if d.model.screen == screenRules {
 		switch event.Name {
 		case fyne.KeyUp, fyne.KeyLeft:
@@ -352,9 +375,7 @@ func (d *desktop) toggleDualDisplay() {
 		return
 	}
 	if d.dualVisible {
-		d.dualWindow.Hide()
-		d.dualVisible = false
-		d.render(true)
+		d.hideDualDisplay()
 		return
 	}
 	d.window.SetFullScreen(false)
@@ -362,23 +383,30 @@ func (d *desktop) toggleDualDisplay() {
 		d.dualWindow.SetFullScreen(false)
 	}
 	if d.dualWindow == nil {
-		d.dualWindow = d.app.NewWindow("Poker Clock — Dual screen")
+		d.dualWindow = d.app.NewWindow("Poker Clock")
 		d.dualWindow.SetIcon(pokerClockIcon())
 		d.dualWindow.SetPadded(false)
 		d.dualWindow.SetFixedSize(false)
-		d.dualWindow.Resize(fyne.NewSize(1000, 700))
+		d.dualWindow.Resize(fyne.NewSize(1280, 900))
 		content, home := d.dualView()
 		d.dualHome = home
-		d.dualWindow.SetContent(content)
+		d.dualKeys = newDesktopKeySink(d)
+		d.dualWindow.SetContent(container.NewBorder(d.dualKeys, nil, nil, nil, content))
 		d.dualWindow.SetCloseIntercept(func() { d.hideDualDisplay() })
 		d.dualWindow.Canvas().SetOnTypedKey(func(event *fyne.KeyEvent) {
 			if event != nil && event.Name == fyne.KeyF11 {
 				d.toggleFullScreen()
 			}
 		})
+		d.dualWindow.Canvas().SetOnTypedRune(func(value rune) {
+			if strings.EqualFold(string(value), "c") {
+				d.hideDualDisplay()
+			}
+		})
 	}
 	d.dualVisible = true
 	d.dualWindow.Show()
+	d.dualWindow.Canvas().Focus(d.dualKeys)
 	d.refreshDualDisplay()
 	d.render(true)
 }
@@ -387,23 +415,48 @@ func (d *desktop) hideDualDisplay() {
 	if d.dualWindow == nil || !d.dualVisible {
 		return
 	}
+	d.dualWindow.SetFullScreen(false)
 	d.dualWindow.Hide()
+	d.window.RequestFocus()
 	d.dualVisible = false
 	d.render(true)
 }
 
 func (d *desktop) toggleFullScreen() {
 	fullScreen := !d.window.FullScreen()
+	d.debugf("fullscreen request: current=%t target=%t focused=%T dual=%t", !fullScreen, fullScreen, d.window.Canvas().Focused(), d.dualVisible)
 	d.window.SetFullScreen(fullScreen)
 	if d.dualVisible {
 		d.dualWindow.SetFullScreen(fullScreen)
+	}
+	if d.model.modal == nil && d.model.browser == nil && d.model.screen != screenEditor {
+		d.window.Canvas().Focus(d.keys)
+		if d.dualVisible && d.dualKeys != nil {
+			d.dualWindow.Canvas().Focus(d.dualKeys)
+		}
+	}
+}
+
+func (d *desktop) debugf(format string, args ...any) {
+	if os.Getenv("POKER_CLOCK_DEBUG") != "" {
+		log.Printf("poker-clock ui: "+format, args...)
 	}
 }
 
 func (d *desktop) refreshDualDisplay() {
 	if d.dualVisible && d.dualHome != nil {
-		d.dualWindow.SetTitle("Poker Clock — " + d.model.record.Name)
+		title := "Poker Clock — " + d.model.record.Name
+		if title != d.dualTitle {
+			d.dualWindow.SetTitle(title)
+			d.dualTitle = title
+		}
 		d.dualHome.refresh(d.model)
+	}
+}
+
+func (d *desktop) refreshDualClock() {
+	if d.dualVisible && d.dualHome != nil {
+		d.dualHome.refreshClock(d.model)
 	}
 }
 
@@ -427,9 +480,15 @@ func (d *desktop) dispatchKey(key keyEvent) {
 	if d.closed.Load() {
 		return
 	}
-	if key.Type == keyRunes && strings.EqualFold(key.String(), "d") && d.model.screen == screenMain && d.model.modal == nil && d.model.browser == nil {
-		d.toggleDualDisplay()
-		return
+	if key.Type == keyRunes && d.model.screen == screenMain && d.model.modal == nil && d.model.browser == nil {
+		if strings.EqualFold(key.String(), "d") {
+			d.toggleDualDisplay()
+			return
+		}
+		if strings.EqualFold(key.String(), "c") && d.dualVisible {
+			d.hideDualDisplay()
+			return
+		}
 	}
 	if d.model.onKey(key) {
 		d.app.Quit()

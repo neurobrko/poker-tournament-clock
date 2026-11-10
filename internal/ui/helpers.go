@@ -117,7 +117,7 @@ func formatChips(value int64) string {
 }
 
 func segmentReminderLines(segment config.Segment) (chipUp, reminder string) {
-	reminder = strings.TrimSpace(segment.Reminder)
+	reminder = truncateReminder(strings.TrimSpace(segment.Reminder))
 	if segment.ChipUp > 0 {
 		return fmt.Sprintf("Chip up! (%s)", formatDisplayChips(segment.ChipUp)), reminder
 	}
@@ -125,6 +125,14 @@ func segmentReminderLines(segment config.Segment) (chipUp, reminder string) {
 		return formatted, ""
 	}
 	return "", reminder
+}
+
+func truncateReminder(reminder string) string {
+	runes := []rune(reminder)
+	if len(runes) > 99 {
+		return string(runes[:99]) + "..."
+	}
+	return reminder
 }
 
 func formatChipUpReminder(reminder string) string {
