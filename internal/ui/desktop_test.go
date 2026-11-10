@@ -114,18 +114,30 @@ func TestDesktopWelcomeKeyboardNavigationAndShortcuts(t *testing.T) {
 	window := app.NewWindow("test")
 	model := NewModel()
 	d := newTestDesktop(app, window, model)
+	window.Resize(fyne.NewSize(1280, 800))
 	d.render(true)
+	for i := 1; i < len(d.startupButtons); i++ {
+		if d.startupButtons[i].Position().Y <= d.startupButtons[i-1].Position().Y {
+			t.Fatal("welcome buttons are not arranged vertically")
+		}
+	}
 	window.Canvas().Focused().TypedKey(&fyne.KeyEvent{Name: fyne.KeyTab})
 	if model.startupCursor != 1 {
 		t.Fatalf("welcome Tab cursor = %d, want 1", model.startupCursor)
 	}
-	window.Canvas().Focused().TypedKey(&fyne.KeyEvent{Name: fyne.KeyLeft})
+	window.Canvas().Focused().TypedKey(&fyne.KeyEvent{Name: fyne.KeyUp})
 	if model.startupCursor != 0 {
-		t.Fatalf("welcome left arrow cursor = %d, want 0", model.startupCursor)
+		t.Fatalf("welcome up arrow cursor = %d, want 0", model.startupCursor)
 	}
-	window.Canvas().Focused().TypedKey(&fyne.KeyEvent{Name: fyne.KeyRight})
+	for _, key := range []fyne.KeyName{fyne.KeyLeft, fyne.KeyRight} {
+		window.Canvas().Focused().TypedKey(&fyne.KeyEvent{Name: key})
+		if model.startupCursor != 0 {
+			t.Fatalf("welcome %s arrow changed cursor to %d", key, model.startupCursor)
+		}
+	}
+	window.Canvas().Focused().TypedKey(&fyne.KeyEvent{Name: fyne.KeyDown})
 	if model.startupCursor != 1 {
-		t.Fatalf("welcome right arrow cursor = %d, want 1", model.startupCursor)
+		t.Fatalf("welcome down arrow cursor = %d, want 1", model.startupCursor)
 	}
 	window.Canvas().Focused().TypedKey(&fyne.KeyEvent{Name: fyne.KeyReturn})
 	if model.browser == nil || model.browser.purpose != browseTournamentDB {

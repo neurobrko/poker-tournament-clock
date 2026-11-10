@@ -379,9 +379,9 @@ func (m *Model) onKey(key keyEvent) bool {
 
 func (m *Model) handleStartupKey(key keyEvent) bool {
 	switch key.Type {
-	case keyUp, keyLeft:
+	case keyUp:
 		m.startupCursor = (m.startupCursor + 2) % 3
-	case keyDown, keyRight:
+	case keyDown:
 		m.startupCursor = (m.startupCursor + 1) % 3
 	case keyEnter:
 		switch m.startupCursor {

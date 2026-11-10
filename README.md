@@ -55,7 +55,7 @@ Template schema and rules are documented in [`docs/configuration.md`](docs/confi
 | `E` | End tournament; incomplete endings require an explanation |
 | `Q` | Confirm exit; running clock pauses and saves before exit |
 
-Controls work with mouse and keyboard. Welcome screen: `N` new, `L` load, `Q` quit; Left/Right arrows and Tab move selection, Enter activates. File browser hides dotfiles and unsupported items by default; `H` toggles hidden files, `U` toggles unselectable files, `Home`/`End` jump to list bounds, `Bck` moves to parent, `N` creates new file, and `Esc` cancels. Player info shows purchase and bust history; running clocks stay visible and update beneath dialogs. Text-entry dialogs treat Space as input, not as the global pause shortcut. Use F11 or window controls to leave fullscreen and resize.
+Controls work with mouse and keyboard. Welcome screen: `N` new, `L` load, `Q` quit; Up/Down arrows and Tab move selection, Enter activates. File browser hides dotfiles and unsupported items by default; `H` toggles hidden files, `U` toggles unselectable files, `Home`/`End` jump to list bounds, `Bck` moves to parent, `N` creates new file, and `Esc` cancels. Player info shows purchase and bust history; running clocks stay visible and update beneath dialogs. Text-entry dialogs treat Space as input, not as the global pause shortcut. Use F11 or window controls to leave fullscreen and resize.
 
 ## Persistence and reporting
 

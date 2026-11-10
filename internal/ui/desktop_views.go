@@ -429,7 +429,7 @@ func (d *desktop) startupView() fyne.CanvasObject {
 			button.Importance = widget.HighImportance
 		}
 	}
-	buttons := container.NewGridWithColumns(3, newTournament, loadTournament, quit)
+	buttons := container.NewVBox(newTournament, loadTournament, quit)
 	footer := canvas.NewText("MIT Licence · Marek Paulik · elvis@elvis.sk · github.com/neurobrko/poker-tournament-clock", Spacedust.Muted)
 	footer.TextSize = 12
 	footer.Alignment = fyne.TextAlignCenter

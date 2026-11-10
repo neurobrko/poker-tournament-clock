@@ -1,5 +1,6 @@
 tmp/
 src/
 .lavish/
+.agents/
 dist/
 poker-clock
