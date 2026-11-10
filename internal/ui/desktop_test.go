@@ -257,6 +257,69 @@ func TestDesktopMainViewHasDisabledFutureActionsAndLargeClock(t *testing.T) {
 	}
 }
 
+func TestDualDisplayShowsReadOnlyClockAndTogglesWithMainWindow(t *testing.T) {
+	app := test.NewApp()
+	defer app.Quit()
+	window := app.NewWindow("test")
+	model := NewModel()
+	template, err := config.DefaultTemplate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	database, err := store.Create(context.Background(), filepath.Join(t.TempDir(), "dual.sqlite"), "Dual test", template)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	model.screen, model.database = screenMain, database
+	model.service = tournament.NewService(database)
+	model.record, err = database.Tournament(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	model.summary, err = model.service.CurrentSummary(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := newTestDesktop(app, window, model)
+	d.render(true)
+	window.SetFullScreen(true)
+	d.activate('d')
+	if d.dualWindow == nil || !d.dualVisible || d.dualWindow.Content() == nil {
+		t.Fatal("D did not open the dual display")
+	}
+	if window.FullScreen() || d.dualWindow.FullScreen() {
+		t.Fatal("opening dual display should leave both windows windowed")
+	}
+	if d.dualHome.timer == nil || d.dualHome.prizeRows == nil || d.dualHome.chipLegendView == nil || len(d.dualHome.actions) != 0 {
+		t.Fatal("dual display is missing clock/prizes/chips or contains actions")
+	}
+	d.toggleFullScreen()
+	if !window.FullScreen() || !d.dualWindow.FullScreen() {
+		t.Fatal("fullscreen toggle did not apply to both windows")
+	}
+	d.dispatchKeyEvent(&fyne.KeyEvent{Name: fyne.KeyF11})
+	if window.FullScreen() || d.dualWindow.FullScreen() {
+		t.Fatal("F11 did not leave fullscreen on both windows")
+	}
+	if d.dualFullscreen == nil || d.dualClose == nil {
+		t.Fatal("dual display is missing fullscreen and close buttons")
+	}
+	test.Tap(d.dualFullscreen)
+	if !window.FullScreen() || !d.dualWindow.FullScreen() {
+		t.Fatal("dual display F11 button did not fullscreen both windows")
+	}
+	firstWindow := d.dualWindow
+	test.Tap(d.dualClose)
+	if d.dualVisible || !window.FullScreen() {
+		t.Fatal("closing the fullscreen dual display should hide it without exiting main fullscreen")
+	}
+	d.activate('d')
+	if !d.dualVisible || d.dualWindow != firstWindow || window.FullScreen() || d.dualWindow.FullScreen() {
+		t.Fatal("reopening dual display did not reuse its window in windowed mode")
+	}
+}
+
 func TestPokerClockIconIsEmbeddedSquarePNG(t *testing.T) {
 	bounds, err := png.DecodeConfig(bytes.NewReader(pokerClockIconPNG))
 	if err != nil {

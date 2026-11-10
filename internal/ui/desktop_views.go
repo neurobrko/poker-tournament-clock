@@ -45,11 +45,12 @@ type desktopHome struct {
 	localTime         *widget.Label
 	version           *widget.Label
 	fullscreen        *widget.Button
+	dualVisible       bool
 	actions           map[rune]*widget.Button
 }
 
-func (d *desktop) mainView() (fyne.CanvasObject, *desktopHome) {
-	h := &desktopHome{
+func newDesktopHome() *desktopHome {
+	return &desktopHome{
 		entrants: widget.NewLabel(""), active: widget.NewLabel(""), sittingOut: widget.NewLabel(""), busts: widget.NewLabel(""),
 		buyIns: widget.NewLabel(""), rebuys: widget.NewLabel(""), addOns: widget.NewLabel(""),
 		totalStack: widget.NewLabel(""), averageStack: widget.NewLabel(""), prizePool: widget.NewLabel(""),
@@ -59,9 +60,13 @@ func (d *desktop) mainView() (fyne.CanvasObject, *desktopHome) {
 		message: widget.NewLabel(""), nextLevel: newColoredLine(2, 21, 16),
 		nextBreak: newColoredLine(5, 21, 16),
 		localTime: widget.NewLabel(""), version: widget.NewLabel(BuildVersion),
-		actions: make(map[rune]*widget.Button),
+		title: canvas.NewText("", Spacedust.Accent), actions: make(map[rune]*widget.Button),
 	}
-	h.title = canvas.NewText("", Spacedust.Accent)
+}
+
+func (d *desktop) mainView() (fyne.CanvasObject, *desktopHome) {
+	h := newDesktopHome()
+	h.dualVisible = d.dualVisible
 	h.title.Alignment = fyne.TextAlignCenter
 	h.title.TextSize = 34
 	h.title.TextStyle = fyne.TextStyle{Bold: true}
@@ -83,6 +88,28 @@ func (d *desktop) mainView() (fyne.CanvasObject, *desktopHome) {
 	main := container.NewBorder(header, footer, left, right, container.NewPadded(center))
 	h.refresh(d.model)
 	return main, h
+}
+
+func (d *desktop) dualView() (fyne.CanvasObject, *desktopHome) {
+	h := newDesktopHome()
+	if chips := d.model.record.Config.ChipValues; len(chips) > 0 {
+		h.chipValues = append([]config.ChipValue(nil), chips...)
+		h.chipLegendView = chipLegend(chips, nil)
+		h.chipLegendSegment = -1
+	}
+	sections := []fyne.CanvasObject{compactSection("Prizes", h.prizeRows)}
+	if h.chipLegendView != nil {
+		sections = append(sections, compactSectionWithSpacing("Chips", h.chipLegendView, 8))
+	}
+	left := container.New(&minimumWidthLayout{width: 242}, container.NewScroll(container.New(layout.NewCustomPaddedVBoxLayout(4), sections...)))
+	d.dualFullscreen = d.newButton("F11  ·  Fullscreen", d.toggleFullScreen)
+	d.dualFullscreen.Importance = widget.LowImportance
+	d.dualClose = d.newButton("Close", d.hideDualDisplay)
+	d.dualClose.Importance = widget.LowImportance
+	controls := container.NewPadded(container.NewHBox(d.dualFullscreen, d.dualClose))
+	view := container.NewBorder(nil, controls, left, nil, container.NewPadded(h.clockColumn()))
+	h.refresh(d.model)
+	return view, h
 }
 
 func (h *desktopHome) leftColumn(chipValues []config.ChipValue) fyne.CanvasObject {
@@ -161,7 +188,7 @@ func (d *desktop) actionColumn(h *desktopHome) fyne.CanvasObject {
 		label string
 	}{
 		{' ', "Start / Pause"}, {'b', "Buy-in"}, {'r', "Rebuy"}, {'a', "Add-on"},
-		{'p', "Players"}, {'o', "Sit out / Return"}, {'l', "Levels"}, {'x', "Bust"},
+		{'p', "Players"}, {'o', "Sit out / Return"}, {'l', "Levels"}, {'x', "Bust"}, {'d', "Dual screen"},
 		{'s', "Settings"}, {'?', "Rules"}, {'f', "Final results"}, {'n', "Sound"}, {'e', "End tournament"}, {'q', "Exit"},
 	}
 	buttons := make([]fyne.CanvasObject, 0, len(items)+1)
@@ -187,7 +214,7 @@ func (d *desktop) actionColumn(h *desktopHome) fyne.CanvasObject {
 
 func (d *desktop) fullscreenButton() *widget.Button {
 	button := d.newButton("⛶  F11", func() {
-		d.window.SetFullScreen(!d.window.FullScreen())
+		d.toggleFullScreen()
 		d.window.Canvas().Focus(d.keys)
 	})
 	button.Importance = widget.LowImportance
@@ -397,6 +424,11 @@ func (h *desktopHome) updateActions(m *Model) {
 	set('o', "O  ·  Sit out / return", ended, false)
 	set('l', "L  ·  Levels", m.record.StartedAt == nil || ended, false)
 	set('x', "X  ·  Bust", m.record.StartedAt == nil || ended, false)
+	dualLabel := "D  ·  Dual screen"
+	if h.dualVisible {
+		dualLabel += "  ·  ON"
+	}
+	set('d', dualLabel, false, false)
 	set('s', "S  ·  Settings", false, false)
 	set('?', "?  ·  Rules", false, false)
 	set('f', "F  ·  Final results", !m.finalResultAvailable, false)

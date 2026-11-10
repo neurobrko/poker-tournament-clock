@@ -28,7 +28,7 @@ go build -trimpath -o poker-clock ./cmd/poker-clock
 ./poker-clock
 ```
 
-The app opens fullscreen by default. Resize the window freely or use **F11** (also available as bottom-right button) to toggle fullscreen. Tournament state appears beneath the clock. The dark Spacedust-inspired palette and embedded Ubuntu Sans, Sans Mono, and Condensed fonts work offline; clocks use Mono and footer notices use Condensed. Colors and typography live in `internal/ui/desktop_theme.go` and can be changed centrally. Startup offers **New tournament**, **Load tournament**, and **Quit**. Release builds display their version tag in the clock footer between local time and the F11 button. Use on-screen controls or keyboard shortcuts. New tournaments can use the embedded default or import YAML; choose a destination folder and enter a new database filename. Existing files are visible but never overwritten. **Load tournament** lists SQLite databases; to use YAML, choose **New tournament → Browse YAML template**.
+The app opens fullscreen by default. Resize the window freely or use **F11** (also available as bottom-right button) to toggle fullscreen. Tournament state appears beneath the clock. The dark Spacedust-inspired palette and embedded Ubuntu Sans, Sans Mono, and Condensed fonts work offline; clocks use Mono and footer notices use Condensed. Colors and typography live in `internal/ui/desktop_theme.go` and can be changed centrally. Startup offers **New tournament**, **Load tournament**, and **Quit**. Release builds display their version tag in the clock footer between local time and the F11 button. Use on-screen controls or keyboard shortcuts. Press `D` to open a read-only second window showing the clock, prizes, and chip values; leave fullscreen to position both windows, then use F11 to toggle fullscreen on both. Closing the second window leaves the tournament running. New tournaments can use the embedded default or import YAML; choose a destination folder and enter a new database filename. Existing files are visible but never overwritten. **Load tournament** lists SQLite databases; to use YAML, choose **New tournament → Browse YAML template**.
 
 A normal Linux desktop build links Fyne's OpenGL/X11 driver. Headless CI/tests use Fyne's software driver with `-tags ci`.
 
@@ -50,6 +50,7 @@ Template schema and rules are documented in [`docs/configuration.md`](docs/confi
 | `X` | Record a bust, void a bust event, or correct one participant |
 | `S` | Import/export settings, rename tournament, choose sound file, reopen ended tournament |
 | `N` | Toggle sound on/off |
+| `D` | Toggle a read-only dual-screen view with the clock, prizes, and chips |
 | `F` | View latest completed standings and saved player payouts |
 | `?` | Texas Hold’em tournament rules reference |
 | `E` | End tournament; incomplete endings require an explanation |
