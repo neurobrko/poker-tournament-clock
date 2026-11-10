@@ -45,8 +45,8 @@ func RunDesktop(application fyne.App) error {
 	window.Canvas().SetOnTypedRune(controller.dispatchRune)
 	window.Canvas().SetOnTypedKey(controller.dispatchKeyEvent)
 	window.SetCloseIntercept(controller.requestQuit)
-	window.Show()
 	window.SetFullScreen(true)
+	window.Show()
 
 	stop := make(chan struct{})
 	defer close(stop)
