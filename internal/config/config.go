@@ -253,6 +253,37 @@ func MarshalTemplate(template Template) ([]byte, error) {
 	return data, nil
 }
 
+func ParsePlayersYAML(data []byte) ([]Player, error) {
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder.KnownFields(true)
+	var players []Player
+	if err := decoder.Decode(&players); err != nil {
+		return nil, fmt.Errorf("decode player list: %w", err)
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return nil, fmt.Errorf("player list must contain exactly one YAML document")
+		}
+		return nil, fmt.Errorf("decode trailing player list document: %w", err)
+	}
+	if err := validatePlayers(players); err != nil {
+		return nil, err
+	}
+	return players, nil
+}
+
+func MarshalPlayersYAML(players []Player) ([]byte, error) {
+	if err := validatePlayers(players); err != nil {
+		return nil, err
+	}
+	data, err := yaml.Marshal(players)
+	if err != nil {
+		return nil, fmt.Errorf("encode player list: %w", err)
+	}
+	return data, nil
+}
+
 func (t Template) Validate() error {
 	if t.Version != CurrentVersion {
 		return fmt.Errorf("unsupported template version %d (supported: %d)", t.Version, CurrentVersion)

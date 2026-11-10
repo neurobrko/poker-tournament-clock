@@ -34,10 +34,11 @@ type Model struct {
 
 	startupCursor int
 
-	browser         *fileBrowser
-	browserCancel   screen
-	pendingName     string
-	pendingTemplate config.Template
+	browser              *fileBrowser
+	browserCancel        screen
+	pendingName          string
+	pendingTemplate      config.Template
+	pendingPlayerImports []pendingPlayerImport
 
 	database             *store.Store
 	service              *tournament.Service
@@ -431,8 +432,12 @@ func (m *Model) handleMainKey(key keyEvent) bool {
 		m.openPurchase(tournament.PurchaseAddOn)
 	case "p", "P":
 		choices := []string{"Add player", "Player info / history", "Rename player", "Remove player", "Void purchase", "Edit player alias"}
+		if m.record.StartedAt == nil {
+			choices = append(choices, "Import players from YAML")
+		}
+		choices = append(choices, "Export players to YAML")
 		if m.record.Status == store.StatusEnded {
-			choices = []string{"Player info / history"}
+			choices = []string{"Player info / history", "Export players to YAML"}
 		}
 		m.modal = &dialog{kind: dialogMenu, purpose: menuPlayers, title: "Players", choices: choices}
 	case "x", "X":
@@ -559,7 +564,9 @@ func (m *Model) browserSelected(path string) {
 		} else {
 			m.setStatus("Custom one-minute warning sound saved.", false)
 		}
-	case browseSaveDatabase, browseSaveTemplate:
+	case browsePlayers:
+		m.importPlayersFrom(path)
+	case browseSaveDatabase, browseSaveTemplate, browseSavePlayers:
 		m.saveBrowserDestination(path, purpose)
 	}
 }
@@ -573,6 +580,8 @@ func (m *Model) saveBrowserDestination(path string, purpose browserPurpose) {
 			return
 		}
 		m.openTournament(database)
+	case browseSavePlayers:
+		m.exportPlayers(path)
 	case browseSaveTemplate:
 		data, err := config.MarshalTemplate(m.record.Config)
 		if err != nil {
@@ -639,7 +648,7 @@ func (m *Model) defaultFilename() string {
 		return -1
 	}, base)
 	switch m.browser.purpose {
-	case browseSaveTemplate:
+	case browseSaveTemplate, browseSavePlayers:
 		return base + ".yaml"
 	case browseSaveDatabase:
 		return base + ".sqlite"

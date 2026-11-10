@@ -83,3 +83,5 @@ Percentages are not silently normalized in configuration. At payout time, unpaid
 Use **Settings → Import/edit YAML template** before play to validate and apply an edited file. Changes to the price or chip count for a purchase type are blocked until all non-void purchases of that type are voided with explanations. After play starts, configuration remains locked, including after pausing and reopening an ended tournament.
 
 **Settings → Export reusable template** writes the current tournament structure as YAML, without the tournament name. Export refuses to overwrite an existing file. The template’s `players` list is the configured seed roster, not a live roster export.
+
+Use **Players → Import players from YAML** to merge a simple `- name: Alice` / optional `alias: Ace` list before the tournament starts. Name conflicts prompt to keep the existing player, update its alias, or cancel; removed matches can be restored, skipped, or canceled. Imports resolve all prompts before changing the roster. **Players → Export players to YAML** includes all non-removed players and aliases, and never overwrites an existing file.

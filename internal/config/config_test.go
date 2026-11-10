@@ -114,6 +114,26 @@ func TestTemplatePlayersSupportAliasesAndValidateNames(t *testing.T) {
 	}
 }
 
+func TestPlayersYAMLRoundTripAndRejectsUnknownFields(t *testing.T) {
+	players := []Player{{Name: "Alice", Alias: "Ace"}, {Name: "Bob"}}
+	data, err := MarshalPlayersYAML(players)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := ParsePlayersYAML(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, players) {
+		t.Fatalf("parsed players = %+v, want %+v", got, players)
+	}
+	for _, invalid := range []string{"- name: Alice\n  unknown: true\n", "- name: Alice\n---\n- name: Bob\n"} {
+		if _, err := ParsePlayersYAML([]byte(invalid)); err == nil {
+			t.Errorf("ParsePlayersYAML accepted %q", invalid)
+		}
+	}
+}
+
 func TestChipValuesAreOptionalAndColorsAcceptHTMLNamesAndHex(t *testing.T) {
 	template, err := DefaultTemplate()
 	if err != nil {

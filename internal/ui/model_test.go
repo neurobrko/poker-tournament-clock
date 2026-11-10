@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -30,7 +31,7 @@ func TestPlayerAliasesAppearOnlyInPlayersMenuAndCanBeEdited(t *testing.T) {
 	model.record.Status = store.StatusNotStarted
 	model.onKey(keyEvent{Type: keyRunes, Runes: []rune{'p'}})
 	menu := model.modal
-	if len(menu.choices) != 6 || menu.choices[5] != "Edit player alias" {
+	if len(menu.choices) != 8 || menu.choices[5] != "Edit player alias" || menu.choices[6] != "Import players from YAML" || menu.choices[7] != "Export players to YAML" {
 		t.Fatalf("players menu choices = %v", menu.choices)
 	}
 	menu.cursor = 5
@@ -41,6 +42,172 @@ func TestPlayerAliasesAppearOnlyInPlayersMenuAndCanBeEdited(t *testing.T) {
 	model.choosePlayer(model.modal, model.players[0])
 	if model.modal.textPurpose != textPlayerAlias || model.modal.input != "Ace" {
 		t.Fatalf("alias editor dialog = %+v", model.modal)
+	}
+}
+
+func TestPlayerYAMLImportResolvesConflictsBeforeApplyingRosterMerge(t *testing.T) {
+	ctx := context.Background()
+	template, err := config.DefaultTemplate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	database, err := store.Create(ctx, filepath.Join(t.TempDir(), "player-import.sqlite"), "Import", template)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	service := tournament.NewService(database)
+	alice, err := service.RegisterPlayer(ctx, "Alice", false, tournament.ActionContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.SetPlayerAlias(ctx, alice.ID, "Old", tournament.ActionContext{}); err != nil {
+		t.Fatal(err)
+	}
+	model := NewModel()
+	model.screen, model.database, model.service = screenMain, database, service
+	model.refresh()
+	path := filepath.Join(t.TempDir(), "players.yaml")
+	if err := os.WriteFile(path, []byte("- name: Alice\n  alias: Ace\n- name: Bob\n  alias: Bee\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	model.importPlayersFrom(path)
+	if model.modal == nil || model.modal.purpose != menuPlayerImportConflict {
+		t.Fatalf("import did not prompt for existing player: %+v", model.modal)
+	}
+	before, err := service.Players(ctx, true)
+	if err != nil || len(before) != 1 {
+		t.Fatalf("roster changed before conflicts were resolved: players=%+v err=%v", before, err)
+	}
+	model.modal.cursor = 1
+	model.chooseMenu(model.modal)
+	players, err := service.Players(ctx, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(players) != 2 || players[0].Alias != "Ace" || players[1].Name != "Bob" || players[1].Alias != "Bee" || players[1].HasInitialBuyIn {
+		t.Fatalf("merged roster = %+v", players)
+	}
+
+	if err := os.WriteFile(path, []byte("- name: Alice\n  alias: Not applied\n- name: Carol\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	model.importPlayersFrom(path)
+	model.modal.cursor = 2
+	model.chooseMenu(model.modal)
+	players, err = service.Players(ctx, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(players) != 2 || players[0].Alias != "Ace" {
+		t.Fatalf("cancelled import changed roster: %+v", players)
+	}
+}
+
+func TestPlayerYAMLImportCanRestoreRemovedPlayer(t *testing.T) {
+	ctx := context.Background()
+	template, err := config.DefaultTemplate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	database, err := store.Create(ctx, filepath.Join(t.TempDir(), "player-restore.sqlite"), "Restore", template)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	service := tournament.NewService(database)
+	removed, err := service.RegisterPlayer(ctx, "Sam", false, tournament.ActionContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.RemovePlayer(ctx, removed.ID, "mistake", tournament.ActionContext{}); err != nil {
+		t.Fatal(err)
+	}
+	model := NewModel()
+	model.screen, model.database, model.service = screenMain, database, service
+	model.refresh()
+	path := filepath.Join(t.TempDir(), "restore.yaml")
+	if err := os.WriteFile(path, []byte("- name: Sam\n  alias: Sammy\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	model.importPlayersFrom(path)
+	if model.modal == nil || len(model.modal.choices) != 3 || model.modal.choices[0] != "Restore and update alias" {
+		t.Fatalf("removed player choices = %+v", model.modal)
+	}
+	model.chooseMenu(model.modal)
+	players, err := service.Players(ctx, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(players) != 1 || players[0].Removed || players[0].ID != removed.ID || players[0].Alias != "Sammy" {
+		t.Fatalf("restored player = %+v", players)
+	}
+}
+
+func TestPlayerYAMLExportOmitsRemovedPlayers(t *testing.T) {
+	ctx := context.Background()
+	template, err := config.DefaultTemplate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	database, err := store.Create(ctx, filepath.Join(t.TempDir(), "player-export.sqlite"), "Export", template)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	service := tournament.NewService(database)
+	kept, err := service.RegisterPlayer(ctx, "Keep", false, tournament.ActionContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.SetPlayerAlias(ctx, kept.ID, "K", tournament.ActionContext{}); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := service.RegisterPlayer(ctx, "Removed", false, tournament.ActionContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.RemovePlayer(ctx, removed.ID, "mistake", tournament.ActionContext{}); err != nil {
+		t.Fatal(err)
+	}
+	model := NewModel()
+	model.database, model.service = database, service
+	model.refresh()
+	path := filepath.Join(t.TempDir(), "export.yaml")
+	model.exportPlayers(path)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	players, err := config.ParsePlayersYAML(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(players, []config.Player{{Name: "Keep", Alias: "K"}}) {
+		t.Fatalf("exported players = %+v", players)
+	}
+}
+
+func TestPlayerYAMLImportIsBlockedAfterTournamentStarts(t *testing.T) {
+	model, database, service := newRunningModel(t)
+	defer database.Close()
+	model.service = service
+	path := filepath.Join(t.TempDir(), "players.yaml")
+	if err := os.WriteFile(path, []byte("- name: Late player\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	model.importPlayersFrom(path)
+	if model.modal == nil || model.modal.title != "Import unavailable" {
+		t.Fatalf("started tournament import result = %+v", model.modal)
+	}
+	players, err := service.Players(context.Background(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, player := range players {
+		if player.Name == "Late player" {
+			t.Fatal("player was imported after tournament start")
+		}
 	}
 }
 
@@ -495,7 +662,7 @@ func TestEndedTournamentKeepsMouseAccessibleReadOnlyPlayerHistory(t *testing.T) 
 	model.record.Status = store.StatusEnded
 	model.players = []tournament.Player{{ID: "p", Name: "Player"}}
 	model.onKey(keyEvent{Type: keyRunes, Runes: []rune{'p'}})
-	if model.modal == nil || len(model.modal.choices) != 1 || model.modal.choices[0] != "Player info / history" {
+	if model.modal == nil || len(model.modal.choices) != 2 || model.modal.choices[0] != "Player info / history" || model.modal.choices[1] != "Export players to YAML" {
 		t.Fatalf("ended players menu = %+v", model.modal)
 	}
 	model.chooseMenu(model.modal)
@@ -587,6 +754,13 @@ func TestFileBrowserFilteringSaveAndBounds(t *testing.T) {
 	}
 	if path, err := saver.newPath("new-rules"); err != nil || filepath.Ext(path) != ".yaml" {
 		t.Fatalf("new template path=%q err=%v", path, err)
+	}
+	playerSaver, err := newFileBrowser(browseSavePlayers, directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path, err := playerSaver.newPath("players"); err != nil || filepath.Ext(path) != ".yaml" {
+		t.Fatalf("new player list path=%q err=%v", path, err)
 	}
 	for i := 0; i < 5; i++ {
 		browser.entries = append(browser.entries, browserEntry{name: fmt.Sprintf("%d.yaml", i), selectable: true})

@@ -44,7 +44,7 @@ Template schema and rules are documented in [`docs/configuration.md`](docs/confi
 | --- | --- |
 | `Space` | Start (with settings-lock confirmation), pause, or resume |
 | `B` / `R` / `A` | Buy-in / rebuy / add-on |
-| `P` | Add/view players, edit aliases, rename/remove players, or void purchases (history only after ending) |
+| `P` | Add/view players, import/export a YAML roster, edit aliases, rename/remove players, or void purchases |
 | `O` | Sit out or return an active player |
 | `L` | Select a configured level or break (confirmation required); optionally set remaining time |
 | `X` | Record a bust, void a bust event, or correct one participant |

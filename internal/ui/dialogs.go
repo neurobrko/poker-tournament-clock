@@ -35,6 +35,7 @@ const (
 	purposeNone dialogPurpose = iota
 	menuTemplate
 	menuPlayers
+	menuPlayerImportConflict
 	menuSettings
 	menuSoundSettings
 	menuBusts
@@ -323,24 +324,31 @@ func (m *Model) chooseMenu(d *dialog) {
 			m.modal = nil
 		}
 	case menuPlayers:
-		if m.record.Status == store.StatusEnded {
-			m.openPlayerSelect(selectInfo, m.players)
-			return
-		}
-		switch d.cursor {
-		case 0:
+		choice := d.choices[d.cursor]
+		switch choice {
+		case "Add player":
 			m.modal = &dialog{kind: dialogText, title: "Add player", prompt: "Player name", textPurpose: textAddPlayer}
-		case 1:
+		case "Player info / history":
 			m.openPlayerSelect(selectInfo, m.players)
-		case 2:
+		case "Rename player":
 			m.openPlayerSelect(selectRename, nonRemoved(m.players))
-		case 3:
+		case "Remove player":
 			m.openPlayerSelect(selectRemove, nonRemoved(m.players))
-		case 4:
+		case "Void purchase":
 			m.openVoidPurchase()
-		case 5:
+		case "Edit player alias":
 			m.openPlayerSelect(selectAlias, nonRemoved(m.players))
+		case "Import players from YAML":
+			if m.record.StartedAt != nil {
+				m.showMessage("Import unavailable", "Import players before starting the tournament.")
+				return
+			}
+			m.startBrowser(browsePlayers, screenMain)
+		case "Export players to YAML":
+			m.startBrowser(browseSavePlayers, screenMain)
 		}
+	case menuPlayerImportConflict:
+		m.choosePlayerImportConflict(d.cursor)
 	case menuSettings:
 		m.chooseSettings(d.cursor)
 	case menuSoundSettings:
@@ -1077,6 +1085,10 @@ func (m *Model) playerByID(id string) (tournament.Player, bool) {
 }
 
 func (m *Model) closeDialog() {
+	if m.modal != nil && m.modal.purpose == menuPlayerImportConflict {
+		m.cancelPlayerImport()
+		return
+	}
 	if m.modal != nil && m.modal.returnTo != nil {
 		m.modal = m.modal.returnTo
 		return
