@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -62,6 +63,15 @@ func TestMP3PlayerCommandDoesNotPassUnsupportedNoStdinFlag(t *testing.T) {
 	for _, argument := range args {
 		if argument == "-nostdin" {
 			t.Fatal("ffplay does not support -nostdin; MP3 playback would silently fail")
+		}
+	}
+}
+
+func TestWindowsMP3PlaybackWaitsForTerminalState(t *testing.T) {
+	script := windowsMP3PlaybackScript("C:\\Users\\player's\\level.mp3")
+	for _, expected := range []string{"player''s", "$p.playState -ne 1", "$p.playState -ne 8"} {
+		if !strings.Contains(script, expected) {
+			t.Fatalf("Windows MP3 script missing %q: %s", expected, script)
 		}
 	}
 }
