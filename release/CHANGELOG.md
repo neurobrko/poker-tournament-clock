@@ -2,19 +2,25 @@
 
 Notable changes for each release. This project follows the spirit of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow `vMAJOR.MINOR.PATCH`.
 
-## [Unreleased]
+## [0.0.2] - 2026-11-11
 
 ### Added
 
-- Structured tournament editor, optional template-seeded player rosters, YAML roster import/export, player aliases, and a read-only dual-screen dashboard.
+- Structured tournament editor for schedules, purchases, registration, chip values, starting players, and prize tiers.
+- Read-only dual-screen dashboard with clock, prizes, and chip values.
+- Player roster YAML import/export, optional template-seeded players, and player aliases.
+- GitHub-only release validation builds; Gitea Actions now runs a lightweight notice job.
 
 ### Fixed
 
-- Validate malformed prize percentages without panicking; keep dual-screen controls read-only and its clock/configuration display current; make roster/settings imports atomic; allow alias-only players to be removed; isolate editor confirmations from background fields.
+- Apply imported tournament settings and player rosters atomically with audit history.
+- Keep the dual-screen clock and chip legend current while isolating its keyboard controls.
+- Prevent editor confirmation dialogs from changing background fields and reject malformed prize percentages safely.
+- Allow players with alias-only history to be removed.
 
 ### Upgrade notes
 
-- Opening a tournament database applies schema migration 5 for player aliases. Back up databases before upgrading. Databases migrated by this release cannot be opened by older schema-4 binaries; restore a pre-upgrade backup to roll back.
+- Opening a tournament database applies schema migration 5 for player aliases. Back up databases before upgrading. Older schema-4 binaries cannot open migrated databases; restore a pre-upgrade backup to roll back.
 
 ## [0.0.1] - 2026-11-05
 

@@ -1,6 +1,12 @@
 # Releasing
 
-GitHub Actions runs formatting, tests, vet, native Linux checks, and supported-platform build checks for pull requests. Pushing a `v*` tag builds six standalone binaries, embeds that tag as the version shown in the clock footer, and publishes a GitHub Release. Gitea Actions runs only a lightweight notice job; CI and release builds run on GitHub. The workflow is [`ci-release.yml`](../.github/workflows/ci-release.yml).
+GitHub Actions runs formatting, tests, vet, and a native Linux check on pushes and pull requests. It also builds the six supported platform targets for pull requests and `build-validation-*` branches. Pushing a `v*` tag builds those binaries with the tag in the clock footer and publishes a GitHub Release. Gitea Actions runs only a lightweight notice job. The workflow is [`ci-release.yml`](../.github/workflows/ci-release.yml).
+
+## Validate a release candidate
+
+Push a branch named `build-validation-<suffix>` (for example, `build-validation-v0.0.2` or `build-validation-dev`) to run the GitHub platform-build matrix without opening a pull request or publishing a release. The workflow matches this prefix with `startsWith`, not a regular expression. For this release, all validation branches embed `v0.0.2` in binaries; update the workflow version expression for later releases. Gitea receives only its notice job.
+
+After all six builds pass, merge the validated tree into `main` on Gitea and push/sync that same tree to GitHub. Re-run validation if merge resolution changes source files.
 
 ## Before the first public release
 
@@ -10,7 +16,7 @@ GitHub Actions runs formatting, tests, vet, native Linux checks, and supported-p
 
 ## Publish
 
-1. Choose the release version using `vMAJOR.MINOR.PATCH` (for example, `v0.1.0`). Ensure the release commit is on the GitHub branch you intend to publish.
+1. Choose the release version using `vMAJOR.MINOR.PATCH` and ensure the final release commit is on `main` at both remotes. For v0.0.2, update `release/CHANGELOG.md` and `release/v0.0.2.md` before tagging.
 2. From a clean checkout, run the same checks as CI:
 
    ```sh
@@ -26,7 +32,7 @@ GitHub Actions runs formatting, tests, vet, native Linux checks, and supported-p
    git remote get-url --push origin
    ```
 
-4. Create and push the annotated tag to the GitHub push remote (shown here as `origin`):
+4. Confirm `v0.0.2` does not already exist on either remote. Create and push the annotated tag to the configured push remotes (shown here as `origin`; this repository pushes to Gitea and GitHub):
 
    ```sh
    git tag -a vMAJOR.MINOR.PATCH -m "Poker Clock vMAJOR.MINOR.PATCH"
@@ -35,4 +41,4 @@ GitHub Actions runs formatting, tests, vet, native Linux checks, and supported-p
 
 5. Watch the **CI and release** workflow complete. Confirm all six binaries appear on the GitHub Release page and download/run the builds for platforms available to test.
 
-A GitHub tag push starts the checks before builds; a failed check prevents release publication. The generated assets are named `poker-clock-<os>-<arch>` (`.exe` on Windows). Do not move or reuse a published version tag; publish a new patch version to replace a bad release.
+A GitHub tag push starts the checks before builds; a failed check prevents release publication. GitHub Release notes come from `release/v0.0.2.md`; the workflow publishes six assets named `poker-clock-<os>-<arch>` (`.exe` on Windows). Opening a tournament database with schema migration 5 requires a backup first; older schema-4 binaries cannot open the migrated database. Do not move or reuse a published version tag; publish a new patch version to replace a bad release.
