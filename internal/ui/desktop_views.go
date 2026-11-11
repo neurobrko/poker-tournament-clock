@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"image/color"
+	"sort"
 	"strings"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/layout"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 	"git.mpx.sk/elvis/poker_clock/internal/config"
 	"git.mpx.sk/elvis/poker_clock/internal/store"
@@ -31,8 +33,8 @@ type desktopHome struct {
 	prizeRows         *fyne.Container
 	prizeKey          string
 	chipLegendView    *fyne.Container
-	chipValues        []config.ChipValue
 	chipLegendSegment int
+	infoSize          fyne.ThemeSizeName
 	leftScroll        *container.Scroll
 	blinds            *fitText
 	timer             *fitText
@@ -42,14 +44,17 @@ type desktopHome struct {
 	message           *widget.Label
 	nextLevel         *coloredLine
 	nextBreak         *coloredLine
+	dualOneLine       bool
 	localTime         *widget.Label
 	version           *widget.Label
 	fullscreen        *widget.Button
+	dualVisible       bool
+	actionKey         string
 	actions           map[rune]*widget.Button
 }
 
-func (d *desktop) mainView() (fyne.CanvasObject, *desktopHome) {
-	h := &desktopHome{
+func newDesktopHome() *desktopHome {
+	return &desktopHome{
 		entrants: widget.NewLabel(""), active: widget.NewLabel(""), sittingOut: widget.NewLabel(""), busts: widget.NewLabel(""),
 		buyIns: widget.NewLabel(""), rebuys: widget.NewLabel(""), addOns: widget.NewLabel(""),
 		totalStack: widget.NewLabel(""), averageStack: widget.NewLabel(""), prizePool: widget.NewLabel(""),
@@ -59,9 +64,13 @@ func (d *desktop) mainView() (fyne.CanvasObject, *desktopHome) {
 		message: widget.NewLabel(""), nextLevel: newColoredLine(2, 21, 16),
 		nextBreak: newColoredLine(5, 21, 16),
 		localTime: widget.NewLabel(""), version: widget.NewLabel(BuildVersion),
-		actions: make(map[rune]*widget.Button),
+		title: canvas.NewText("", Spacedust.Accent), actions: make(map[rune]*widget.Button),
 	}
-	h.title = canvas.NewText("", Spacedust.Accent)
+}
+
+func (d *desktop) mainView() (fyne.CanvasObject, *desktopHome) {
+	h := newDesktopHome()
+	h.dualVisible = d.dualVisible
 	h.title.Alignment = fyne.TextAlignCenter
 	h.title.TextSize = 34
 	h.title.TextStyle = fyne.TextStyle{Bold: true}
@@ -85,39 +94,107 @@ func (d *desktop) mainView() (fyne.CanvasObject, *desktopHome) {
 	return main, h
 }
 
-func (h *desktopHome) leftColumn(chipValues []config.ChipValue) fyne.CanvasObject {
+func (d *desktop) dualView() (fyne.CanvasObject, *desktopHome) {
+	h := newDesktopHome()
+	h.infoSize = theme.SizeNameHeadingText
+	h.nextBreak.maxTextSize, h.nextBreak.minTextSize = 21, 16
+	h.nextLevel.maxTextSize, h.nextLevel.minTextSize = 21, 16
+	h.dualOneLine = true
+	h.nextBreak.maxParts = 8
+	h.title.Alignment = fyne.TextAlignCenter
+	h.title.TextSize = 34
+	h.title.TextStyle = fyne.TextStyle{Bold: true}
+	center := h.clockColumn()
+	blindsSize := float32(90)
+	h.blinds.maxSize, h.blinds.minSize = blindsSize, 28
+	h.blinds.preferred = fyne.NewSize(280, max(float32(120), blindsSize*1.1))
+	lineHeight := blindsSize * 1.2
+	h.nextBreak.minHeight = lineHeight
+	leftScroll := container.NewVScroll(container.New(windowSideInsetLayout{inset: 16}, container.NewVBox(h.tournamentSection(), h.stackPoolSection())))
+	rightSections := []fyne.CanvasObject{h.prizeSection()}
+	if chips := h.chipSection(d.model.record.Config.ChipValues); chips != nil {
+		rightSections = append(rightSections, chips)
+	}
+	rightScroll := container.NewVScroll(container.New(windowSideInsetLayout{inset: 16}, container.NewVBox(rightSections...)))
+	left := container.New(&minimumWidthLayout{width: 280}, leftScroll)
+	right := container.New(&minimumWidthLayout{width: 300}, rightScroll)
+	header := container.NewPadded(container.NewCenter(h.title))
+	h.localTime.Alignment = fyne.TextAlignLeading
+	h.localTime.TextStyle = fyne.TextStyle{Monospace: true}
+	d.dualFullscreen = d.newButton("⛶  F11", d.toggleFullScreen)
+	d.dualFullscreen.Importance = widget.LowImportance
+	d.dualClose = d.newButton("Close  ·  C", d.hideDualDisplay)
+	d.dualClose.Importance = widget.LowImportance
+	footer := container.NewPadded(container.NewHBox(h.localTime, layout.NewSpacer(), d.dualFullscreen, d.dualClose))
+	view := container.NewBorder(header, footer, left, right, container.NewPadded(center))
+	h.refresh(d.model)
+	return view, h
+}
+
+func (h *desktopHome) tournamentSection() fyne.CanvasObject {
 	stats := container.New(layout.NewCustomPaddedVBoxLayout(0),
-		statRow("Entrants", h.entrants),
-		statRow("Active players", h.active),
-		statRow("Sitting out", h.sittingOut),
-		statRow("Busts", h.busts),
+		h.statRow("Entrants", h.entrants),
+		h.statRow("Active players", h.active),
+		h.statRow("Sitting out", h.sittingOut),
+		h.statRow("Busts", h.busts),
 	)
+	return h.section("Tournament", stats)
+}
+
+func (h *desktopHome) stackPoolSection() fyne.CanvasObject {
 	stackPool := container.New(layout.NewCustomPaddedVBoxLayout(0),
-		statRow("Buy-ins", h.buyIns),
-		statRow("Rebuys", h.rebuys),
-		statRow("Add-ons", h.addOns),
-		statRow("Prize pool", h.prizePool),
-		statRow("Total stack", h.totalStack),
-		statRow("Average stack", h.averageStack),
+		h.statRow("Buy-ins", h.buyIns),
+		h.statRow("Rebuys", h.rebuys),
+		h.statRow("Add-ons", h.addOns),
+		h.statRow("Prize pool", h.prizePool),
+		h.statRow("Total stack", h.totalStack),
+		h.statRow("Average stack", h.averageStack),
 	)
-	sectionItems := []fyne.CanvasObject{
-		compactSection("Tournament", stats),
-		compactSection("Stack & pool", stackPool),
-		compactSection("Prizes", h.prizeRows),
-	}
-	if len(chipValues) > 0 {
-		h.chipValues = append([]config.ChipValue(nil), chipValues...)
-		h.chipLegendView = chipLegend(chipValues, nil)
+	return h.section("Stack & pool", stackPool)
+}
+
+func (h *desktopHome) prizeSection() fyne.CanvasObject { return h.section("Prizes", h.prizeRows) }
+
+func (h *desktopHome) chipSection(values []config.ChipValue) fyne.CanvasObject {
+	if h.chipLegendView == nil && len(values) > 0 {
+		h.chipLegendView = chipLegendWithSize(values, nil, h.infoSize != "")
 		h.chipLegendSegment = -1
-		sectionItems = append(sectionItems, compactSectionWithSpacing("Chips", h.chipLegendView, 8))
 	}
-	sections := container.New(layout.NewCustomPaddedVBoxLayout(4), sectionItems...)
-	h.leftScroll = container.NewScroll(sections)
+	if h.chipLegendView == nil {
+		return nil
+	}
+	return h.section("Chips", h.chipLegendView)
+}
+
+func (h *desktopHome) section(title string, content fyne.CanvasObject) fyne.CanvasObject {
+	if h.infoSize != "" && title == "Chips" {
+		return compactSectionWithSize(title, content, 7, 26)
+	}
+	if h.infoSize != "" {
+		return compactSectionWithSize(title, content, 7, 26)
+	}
+	if title == "Chips" {
+		return compactSectionWithSpacing(title, content, 8)
+	}
+	return compactSection(title, content)
+}
+
+func (h *desktopHome) statRow(label string, value fyne.CanvasObject) fyne.CanvasObject {
+	return statRowSize(label, value, h.infoSize)
+}
+
+func (h *desktopHome) leftColumn(chipValues []config.ChipValue) fyne.CanvasObject {
+	sections := []fyne.CanvasObject{h.tournamentSection(), h.stackPoolSection(), h.prizeSection()}
+	if chip := h.chipSection(chipValues); chip != nil {
+		sections = append(sections, chip)
+	}
+	content := container.New(layout.NewCustomPaddedVBoxLayout(4), sections...)
+	h.leftScroll = container.NewScroll(content)
 	h.leftScroll.Direction = container.ScrollVerticalOnly
 	return h.leftScroll
 }
 
-func (h *desktopHome) clockColumn() fyne.CanvasObject {
+func (h *desktopHome) initializeClockWidgets() *canvas.Text {
 	blindsTitle := canvas.NewText("BLINDS AND ANTE", Spacedust.Blue)
 	blindsTitle.TextSize = 21
 	blindsTitle.TextStyle = fyne.TextStyle{Bold: true}
@@ -130,23 +207,26 @@ func (h *desktopHome) clockColumn() fyne.CanvasObject {
 	h.status.preferred = fyne.NewSize(220, 64)
 	h.status.text.TextStyle = fyne.TextStyle{Bold: true}
 	h.chipUpReminder.Alignment = fyne.TextAlignCenter
-	h.chipUpReminder.TextSize = 18
+	h.chipUpReminder.TextSize = 32
 	h.chipUpReminder.TextStyle = fyne.TextStyle{Bold: true}
 	h.reminder.Alignment = fyne.TextAlignCenter
 	h.reminder.TextSize = 18
 	h.reminder.TextStyle = fyne.TextStyle{Bold: true}
 	h.message.Wrapping = fyne.TextWrapWord
+	return blindsTitle
+}
 
+func (h *desktopHome) clockColumn() fyne.CanvasObject {
+	blindsTitle := h.initializeClockWidgets()
 	current := container.NewVBox(blindsTitle, h.blinds)
 	clock := container.NewMax(h.timer)
 
-	clockFooter := container.NewVBox(
-		container.NewMax(h.status),
-		container.NewMax(h.nextBreak),
-		container.NewMax(h.nextLevel),
-		container.NewCenter(h.chipUpReminder),
-		container.NewCenter(h.reminder),
-	)
+	clockRows := []fyne.CanvasObject{container.NewMax(h.status), container.NewMax(h.nextBreak)}
+	if !h.dualOneLine {
+		clockRows = append(clockRows, container.NewMax(h.nextLevel))
+	}
+	clockRows = append(clockRows, container.NewCenter(h.chipUpReminder), container.NewCenter(h.reminder))
+	clockFooter := container.NewVBox(clockRows...)
 	clock = container.NewBorder(nil, clockFooter, nil, nil, clock)
 	content := container.NewBorder(current, nil, nil, nil, clock)
 	return container.NewPadded(content)
@@ -161,7 +241,7 @@ func (d *desktop) actionColumn(h *desktopHome) fyne.CanvasObject {
 		label string
 	}{
 		{' ', "Start / Pause"}, {'b', "Buy-in"}, {'r', "Rebuy"}, {'a', "Add-on"},
-		{'p', "Players"}, {'o', "Sit out / Return"}, {'l', "Levels"}, {'x', "Bust"},
+		{'p', "Players"}, {'o', "Sit out / Return"}, {'l', "Levels"}, {'x', "Bust"}, {'d', "Dual screen"},
 		{'s', "Settings"}, {'?', "Rules"}, {'f', "Final results"}, {'n', "Sound"}, {'e', "End tournament"}, {'q', "Exit"},
 	}
 	buttons := make([]fyne.CanvasObject, 0, len(items)+1)
@@ -187,7 +267,7 @@ func (d *desktop) actionColumn(h *desktopHome) fyne.CanvasObject {
 
 func (d *desktop) fullscreenButton() *widget.Button {
 	button := d.newButton("⛶  F11", func() {
-		d.window.SetFullScreen(!d.window.FullScreen())
+		d.toggleFullScreen()
 		d.window.Canvas().Focus(d.keys)
 	})
 	button.Importance = widget.LowImportance
@@ -215,14 +295,6 @@ func (h *desktopHome) refresh(m *Model) {
 	h.rebuys.SetText(formatPurchaseCount(m.summary.Rebuys, m.summary.RebuyCents, m.record.Config.Purchases.Rebuy.Price))
 	h.addOns.SetText(formatPurchaseCount(m.summary.AddOns, m.summary.AddOnCents, m.record.Config.Purchases.AddOn.Price))
 	h.totalStack.SetText(formatDisplayChips(m.summary.TotalStack))
-	remainingChips, removedChips := chipsAfterChipUps(m.record.Config.ChipValues, m.record.Config.Schedule, m.record.Checkpoint.SegmentIndex)
-	h.averageStack.SetText(formatDisplayChips(roundedAverageStack(m.summary.AverageStack, remainingChips)))
-	if h.chipLegendView != nil && h.chipLegendSegment != m.record.Checkpoint.SegmentIndex {
-		updated := chipLegend(h.chipValues, removedChips)
-		h.chipLegendView.Objects = updated.Objects
-		h.chipLegendView.Refresh()
-		h.chipLegendSegment = m.record.Checkpoint.SegmentIndex
-	}
 	h.prizePool.SetText(m.summary.PrizePoolCents.String())
 
 	completed := m.record.Status == store.StatusEnded && m.record.ResultCompleted != nil && *m.record.ResultCompleted
@@ -235,7 +307,7 @@ func (h *desktopHome) refresh(m *Model) {
 				label = ordinalPlace(prize.Place)
 			}
 			amountLabel := widget.NewLabel(config.EuroCents(prize.AmountCents).String())
-			row := statRow(label, amountLabel)
+			row := statRowSize(label, amountLabel, h.infoSize)
 			paid := prize.Place > int(m.summary.ActivePlayers) || completed
 			if paid {
 				h.prizeRows.Add(struckThroughObject(row))
@@ -250,6 +322,18 @@ func (h *desktopHome) refresh(m *Model) {
 		h.prizeKey = prizeKey
 	}
 
+	h.refreshClock(m)
+}
+
+func (h *desktopHome) refreshClock(m *Model) {
+	remainingChips, removedChips := chipsAfterChipUps(m.record.Config.ChipValues, m.record.Config.Schedule, m.record.Checkpoint.SegmentIndex)
+	h.averageStack.SetText(formatDisplayChips(roundedAverageStack(m.summary.AverageStack, remainingChips)))
+	if h.chipLegendView != nil && h.chipLegendSegment != m.record.Checkpoint.SegmentIndex {
+		updated := chipLegendWithSize(m.record.Config.ChipValues, removedChips, h.infoSize != "")
+		h.chipLegendView.Objects = updated.Objects
+		h.chipLegendView.Refresh()
+		h.chipLegendSegment = m.record.Checkpoint.SegmentIndex
+	}
 	segment := currentDesktopSegment(m)
 	chipUp, reminder := "", ""
 	if segment != nil && !m.record.Checkpoint.SegmentFinished {
@@ -305,13 +389,18 @@ func (h *desktopHome) refresh(m *Model) {
 	}
 	h.status.setText(status)
 	h.status.Refresh()
-	h.nextLevel.setParts(desktopNextBlindsParts(m))
-	nextBreak := desktopNextBreakParts(m, m.summary.AverageStack, h.status)
-	h.nextBreak.setParts(nextBreak)
-	if len(nextBreak) == 0 {
-		h.nextBreak.Hide()
-	} else {
+	if h.dualOneLine {
+		h.nextBreak.setParts(dualNextInfoParts(m))
 		h.nextBreak.Show()
+	} else {
+		nextBreak := desktopNextBreakParts(m, m.summary.AverageStack, h.status)
+		h.nextBreak.setParts(nextBreak)
+		h.nextLevel.setParts(desktopNextBlindsParts(m))
+		if len(nextBreak) == 0 {
+			h.nextBreak.Hide()
+		} else {
+			h.nextBreak.Show()
+		}
 	}
 	h.localTime.SetText(time.Now().Format("15:04:05"))
 	var messages []string
@@ -338,6 +427,12 @@ func (h *desktopHome) refresh(m *Model) {
 
 func (h *desktopHome) updateActions(m *Model) {
 	ended := m.record.Status == store.StatusEnded
+	addonOpen := m.record.Config.Registration.AddOnsEnabled && !ended && tournament.AddOnWindowOpen(m.record.Config, m.record.Checkpoint.SegmentIndex, m.record.Checkpoint.SegmentFinished)
+	key := fmt.Sprintf("%s/%t/%t/%t/%t/%t/%t/%t/%t", m.record.Status, m.record.RegistrationClosed, m.record.StartedAt != nil, m.record.Config.Registration.RebuysEnabled, m.record.Config.Registration.AddOnsEnabled, addonOpen, m.finalResultAvailable, m.prefs.SoundEnabled, h.dualVisible)
+	if key == h.actionKey {
+		return
+	}
+	h.actionKey = key
 	closed := m.record.RegistrationClosed || ended
 	active := func(key rune) *widget.Button { return h.actions[key] }
 	set := func(key rune, label string, disabled bool, important bool) {
@@ -383,7 +478,7 @@ func (h *desktopHome) updateActions(m *Model) {
 		rebuyLabel += "  ·  CLOSED"
 	}
 	set('r', rebuyLabel, rebuyDisabled, false)
-	addonDisabled := ended || !m.record.Config.Registration.AddOnsEnabled || !tournament.AddOnWindowOpen(m.record.Config, m.record.Checkpoint.SegmentIndex, m.record.Checkpoint.SegmentFinished)
+	addonDisabled := !addonOpen
 	addonLabel := "A  ·  Add-on"
 	if !m.record.Config.Registration.AddOnsEnabled {
 		addonLabel += "  ·  OFF"
@@ -397,6 +492,11 @@ func (h *desktopHome) updateActions(m *Model) {
 	set('o', "O  ·  Sit out / return", ended, false)
 	set('l', "L  ·  Levels", m.record.StartedAt == nil || ended, false)
 	set('x', "X  ·  Bust", m.record.StartedAt == nil || ended, false)
+	dualLabel := "D  ·  Dual screen"
+	if h.dualVisible {
+		dualLabel += "  ·  ON"
+	}
+	set('d', dualLabel, false, h.dualVisible)
 	set('s', "S  ·  Settings", false, false)
 	set('?', "?  ·  Rules", false, false)
 	set('f', "F  ·  Final results", !m.finalResultAvailable, false)
@@ -419,8 +519,9 @@ func (d *desktop) startupView() fyne.CanvasObject {
 	subtitle.Alignment = fyne.TextAlignCenter
 	newTournament := d.newButton("New tournament (N)", func() { d.activate('n') })
 	loadTournament := d.newButton("Load tournament (L)", func() { d.activate('l') })
+	editor := d.newButton("Tournament editor (T)", func() { d.activate('t') })
 	quit := d.newButton("Quit (Q)", func() { d.activate('q') })
-	choices := []*widget.Button{newTournament, loadTournament, quit}
+	choices := []*widget.Button{newTournament, loadTournament, editor, quit}
 	d.startupButtons = choices
 	for index, button := range choices {
 		button.Alignment = widget.ButtonAlignCenter
@@ -429,12 +530,14 @@ func (d *desktop) startupView() fyne.CanvasObject {
 			button.Importance = widget.HighImportance
 		}
 	}
-	buttons := container.NewGridWithColumns(3, newTournament, loadTournament, quit)
-	footer := canvas.NewText("MIT Licence · Marek Paulik · elvis@elvis.sk · github.com/neurobrko/poker-tournament-clock", Spacedust.Muted)
+	buttonColumn := container.NewVBox(newTournament, loadTournament, editor, quit)
+	buttons := container.NewCenter(container.New(&widthLimitLayout{width: 420}, buttonColumn))
+	footer := canvas.NewText("MIT Licence · Marek Paulik · elvis@elvis.sk · github.com/neurobrko/poker-tournament-clock · "+BuildVersion, Spacedust.Muted)
 	footer.TextSize = 12
 	footer.Alignment = fyne.TextAlignCenter
-	body := container.NewVBox(container.NewCenter(title), container.NewCenter(subtitle), layout.NewSpacer(), buttons, layout.NewSpacer(), d.statusNotice(), container.NewCenter(footer))
-	return container.NewCenter(container.NewGridWrap(fyne.NewSize(820, 400), softCard("Welcome", body)))
+	body := container.NewVBox(container.NewCenter(title), container.NewCenter(subtitle), layout.NewSpacer(), container.NewPadded(buttons), layout.NewSpacer(), d.statusNotice())
+	card := container.NewCenter(container.NewGridWrap(fyne.NewSize(820, 400), softCard("Welcome", body)))
+	return container.NewBorder(nil, container.NewPadded(container.NewCenter(footer)), nil, nil, card)
 }
 
 func (d *desktop) rulesView() fyne.CanvasObject {
@@ -482,6 +585,57 @@ func currentLevelNumber(m *Model) int {
 		}
 	}
 	return count
+}
+
+func dualNextInfoParts(m *Model) []coloredLinePart {
+	countdown := "—"
+	if label := m.nextBreakLabel(); !strings.EqualFold(label, "none configured") {
+		countdown = "unknown"
+		if index := strings.LastIndex(label, " in "); index >= 0 {
+			countdown = compactBreakCountdown(strings.TrimSpace(label[index+4:]))
+		}
+	}
+	remaining, _ := chipsAfterChipUps(m.record.Config.ChipValues, m.record.Config.Schedule, m.record.Checkpoint.SegmentIndex)
+	average := formatDisplayChips(roundedAverageStack(m.summary.AverageStack, remaining))
+	blinds := desktopNextBlinds(m)
+	if blinds == "Final level / hold" {
+		blinds = "Final/hold"
+	} else {
+		blinds = strings.ReplaceAll(blinds, " ", "")
+	}
+	label := func(text string, spaceBefore bool) coloredLinePart {
+		return coloredLinePart{text: text, color: Spacedust.Blue, bold: true, fontSize: 21, spaceBefore: spaceBefore, spaceBeforeSize: 64}
+	}
+	value := func(text string) coloredLinePart {
+		return coloredLinePart{text: text, color: Spacedust.Foreground, bold: true, fontSize: 64, spaceBefore: true, spaceBeforeSize: 64}
+	}
+	separator := coloredLinePart{text: "·", color: Spacedust.Muted, fontSize: 32, spaceBefore: true, spaceBeforeSize: 64}
+	return []coloredLinePart{
+		label("NEXT BREAK", false), value(countdown), separator,
+		label("AVG. STACK", true), value(average), separator,
+		label("NEXT BLINDS", true), value(blinds),
+	}
+}
+
+func compactBreakCountdown(value string) string {
+	parsed, err := time.Parse("15:04:05", value)
+	if err != nil {
+		parsed, err = time.Parse("04:05", value)
+	}
+	if err != nil {
+		return value
+	}
+	hours, minutes, seconds := parsed.Clock()
+	if hours > 0 {
+		if minutes == 0 {
+			return fmt.Sprintf("%dh", hours)
+		}
+		return fmt.Sprintf("%dh%dm", hours, minutes)
+	}
+	if minutes > 0 {
+		return fmt.Sprintf("%dm", minutes)
+	}
+	return fmt.Sprintf("%ds", seconds)
 }
 
 func desktopNextBlindsParts(m *Model) []coloredLinePart {
@@ -619,10 +773,20 @@ func ordinalPlace(place int) string {
 }
 
 func statRow(label string, value fyne.CanvasObject) fyne.CanvasObject {
+	return statRowSize(label, value, "")
+}
+
+func statRowSize(label string, value fyne.CanvasObject, size fyne.ThemeSizeName) fyne.CanvasObject {
 	key := widget.NewLabel(label)
 	key.TextStyle = fyne.TextStyle{Bold: true}
+	if size != "" {
+		key.SizeName = size
+	}
 	if valueLabel, ok := value.(*widget.Label); ok {
 		valueLabel.Alignment = fyne.TextAlignTrailing
+		if size != "" {
+			valueLabel.SizeName = size
+		}
 	}
 	return container.NewBorder(nil, nil, key, nil, value)
 }
@@ -686,23 +850,26 @@ func compactSection(title string, content fyne.CanvasObject) fyne.CanvasObject {
 }
 
 func compactSectionWithSpacing(title string, content fyne.CanvasObject, spacing float32) fyne.CanvasObject {
+	return compactSectionWithSize(title, content, spacing, 20)
+}
+
+func compactSectionWithSize(title string, content fyne.CanvasObject, spacing, textSize float32) fyne.CanvasObject {
 	heading := canvas.NewText(title, Spacedust.Blue)
-	heading.TextSize = 20
+	heading.TextSize = textSize
 	heading.TextStyle = fyne.TextStyle{Bold: true}
 	return container.New(layout.NewCustomPaddedVBoxLayout(spacing), heading, content)
 }
 
 func chipLegend(values []config.ChipValue, removed map[int64]bool) *fyne.Container {
-	tokens := make([]fyne.CanvasObject, 0, len(values))
-	for _, chip := range values {
-		fill, err := config.ParseChipColor(chip.Color)
-		if err != nil {
-			continue
+	return chipLegendWithSize(values, removed, false)
+}
+
+func chipLegendWithSize(values []config.ChipValue, removed map[int64]bool, large bool) *fyne.Container {
+	tokens := chipTokens(values, removed)
+	if large {
+		for _, token := range tokens {
+			token.(*chipToken).large = true
 		}
-		if removed[chip.Value] {
-			fill = color.NRGBA{R: 0x77, G: 0x77, B: 0x77, A: 0xff}
-		}
-		tokens = append(tokens, newChipToken(formatDisplayChips(chip.Value), fill))
 	}
 	if len(tokens) == 0 {
 		return container.NewVBox(mutedLabel("No chip values"))
@@ -714,6 +881,23 @@ func chipLegend(values []config.ChipValue, removed map[int64]bool) *fyne.Contain
 		rows = append(rows, container.NewCenter(row))
 	}
 	return container.NewVBox(rows...)
+}
+
+func chipTokens(values []config.ChipValue, removed map[int64]bool) []fyne.CanvasObject {
+	chips := append([]config.ChipValue(nil), values...)
+	sort.Slice(chips, func(i, j int) bool { return chips[i].Value < chips[j].Value })
+	tokens := make([]fyne.CanvasObject, 0, len(chips))
+	for _, chip := range chips {
+		fill, err := config.ParseChipColor(chip.Color)
+		if err != nil {
+			continue
+		}
+		if removed[chip.Value] {
+			fill = color.NRGBA{R: 0x77, G: 0x77, B: 0x77, A: 0xff}
+		}
+		tokens = append(tokens, newChipToken(formatDisplayChips(chip.Value), fill))
+	}
+	return tokens
 }
 
 func chipsAfterChipUps(chips []config.ChipValue, schedule []config.Segment, throughSegment int) ([]config.ChipValue, map[int64]bool) {
@@ -736,6 +920,7 @@ type chipToken struct {
 	widget.BaseWidget
 	value string
 	fill  color.NRGBA
+	large bool
 }
 
 func newChipToken(value string, fill color.NRGBA) *chipToken {
@@ -754,12 +939,20 @@ func (t *chipToken) CreateRenderer() fyne.WidgetRenderer {
 	circle.StrokeWidth = 1
 	label := canvas.NewText(t.value, foreground)
 	label.TextSize = 15
+	if t.large {
+		label.TextSize = 20
+	}
 	label.TextStyle = fyne.TextStyle{Bold: true}
 	label.Alignment = fyne.TextAlignCenter
 	return &chipTokenRenderer{token: t, circle: circle, label: label, objects: []fyne.CanvasObject{circle, label}}
 }
 
-func (t *chipToken) MinSize() fyne.Size { return fyne.NewSize(48, 48) }
+func (t *chipToken) MinSize() fyne.Size {
+	if t.large {
+		return fyne.NewSize(72, 72)
+	}
+	return fyne.NewSize(48, 48)
+}
 
 type chipTokenRenderer struct {
 	token   *chipToken
@@ -788,13 +981,14 @@ func (r *chipTokenRenderer) Objects() []fyne.CanvasObject { return r.objects }
 func (r *chipTokenRenderer) Destroy()                     {}
 
 type coloredLinePart struct {
-	text        string
-	color       color.NRGBA
-	bold        bool
-	monospace   bool
-	fontSize    float32
-	fontSource  *fitText
-	spaceBefore bool
+	text            string
+	color           color.NRGBA
+	bold            bool
+	monospace       bool
+	fontSize        float32
+	fontSource      *fitText
+	spaceBefore     bool
+	spaceBeforeSize float32
 }
 
 type coloredLine struct {
@@ -802,6 +996,7 @@ type coloredLine struct {
 	maxParts    int
 	maxTextSize float32
 	minTextSize float32
+	minHeight   float32
 	parts       []coloredLinePart
 }
 
@@ -812,6 +1007,9 @@ func newColoredLine(maxParts int, maxTextSize, minTextSize float32) *coloredLine
 }
 
 func (l *coloredLine) MinSize() fyne.Size {
+	if l.minHeight > 0 {
+		return fyne.NewSize(220, l.minHeight)
+	}
 	fontSize := l.maxTextSize
 	for _, part := range l.parts {
 		if part.fontSize > fontSize {
@@ -877,7 +1075,11 @@ func (r *coloredLineRenderer) Layout(size fyne.Size) {
 			measured, baseline := fyne.CurrentApp().Driver().RenderedTextSize(part.text, fontSizes[index], styles[index], nil)
 			widths[index], heights[index], baselines[index] = measured.Width, measured.Height, baseline
 			if part.spaceBefore {
-				gaps[index] = fyne.MeasureText(" ", fontSizes[index], fyne.TextStyle{Bold: part.bold}).Width
+				spaceSize := fontSizes[index]
+				if part.spaceBeforeSize > 0 {
+					spaceSize = part.spaceBeforeSize
+				}
+				gaps[index] = fyne.MeasureText(" ", spaceSize, fyne.TextStyle{Bold: part.bold}).Width
 			}
 			total += gaps[index] + measured.Width
 		}
@@ -885,14 +1087,18 @@ func (r *coloredLineRenderer) Layout(size fyne.Size) {
 	}
 	totalWidth := measure()
 	for totalWidth > size.Width {
-		shrunk := false
-		for index, part := range r.line.parts {
-			if part.text != "" && index < len(fontSizes) && fontSizes[index] > r.line.minTextSize {
-				fontSizes[index]--
-				shrunk = true
+		shrink := func(valuesOnly bool) bool {
+			shrunk := false
+			for index, part := range r.line.parts {
+				isValue := part.fontSource != nil || part.spaceBefore || part.fontSize > r.line.maxTextSize
+				if part.text != "" && index < len(fontSizes) && isValue == valuesOnly && fontSizes[index] > r.line.minTextSize {
+					fontSizes[index]--
+					shrunk = true
+				}
 			}
+			return shrunk
 		}
-		if !shrunk {
+		if !shrink(true) && !shrink(false) {
 			break
 		}
 		totalWidth = measure()

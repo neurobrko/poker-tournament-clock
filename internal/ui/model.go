@@ -27,6 +27,7 @@ const (
 	screenStartup screen = iota
 	screenMain
 	screenRules
+	screenEditor
 )
 
 type Model struct {
@@ -34,10 +35,18 @@ type Model struct {
 
 	startupCursor int
 
-	browser         *fileBrowser
-	browserCancel   screen
-	pendingName     string
-	pendingTemplate config.Template
+	editorTemplate  config.Template
+	editorName      string
+	editorAfterSave bool
+	editorDirty     bool
+
+	browser                *fileBrowser
+	browserCancel          screen
+	pendingName            string
+	pendingTemplate        config.Template
+	templatePlayersChecked bool
+	pendingTemplateImport  *config.Template
+	pendingPlayerImports   []pendingPlayerImport
 
 	database             *store.Store
 	service              *tournament.Service
@@ -374,15 +383,18 @@ func (m *Model) onKey(key keyEvent) bool {
 	if m.screen == screenStartup {
 		return m.handleStartupKey(key)
 	}
+	if m.screen == screenEditor {
+		return m.handleEditorKey(key)
+	}
 	return m.handleMainKey(key)
 }
 
 func (m *Model) handleStartupKey(key keyEvent) bool {
 	switch key.Type {
-	case keyUp, keyLeft:
-		m.startupCursor = (m.startupCursor + 2) % 3
-	case keyDown, keyRight:
-		m.startupCursor = (m.startupCursor + 1) % 3
+	case keyUp:
+		m.startupCursor = (m.startupCursor + 3) % 4
+	case keyDown:
+		m.startupCursor = (m.startupCursor + 1) % 4
 	case keyEnter:
 		switch m.startupCursor {
 		case 0:
@@ -390,6 +402,8 @@ func (m *Model) handleStartupKey(key keyEvent) bool {
 		case 1:
 			m.startBrowser(browseTournamentDB, screenStartup)
 		case 2:
+			m.openEditorSources()
+		case 3:
 			m.askQuit()
 		}
 	case keyEsc:
@@ -402,7 +416,11 @@ func (m *Model) handleStartupKey(key keyEvent) bool {
 		case "l":
 			m.startupCursor = 1
 			m.startBrowser(browseTournamentDB, screenStartup)
+		case "t":
+			m.startupCursor = 2
+			m.openEditorSources()
 		case "q":
+			m.startupCursor = 3
 			m.askQuit()
 		}
 	}
@@ -430,9 +448,13 @@ func (m *Model) handleMainKey(key keyEvent) bool {
 	case "a", "A":
 		m.openPurchase(tournament.PurchaseAddOn)
 	case "p", "P":
-		choices := []string{"Add player", "Player info / history", "Rename player", "Remove player", "Void purchase"}
+		choices := []string{"Add player", "Player info / history", "Rename player", "Remove player", "Void purchase", "Edit player alias"}
+		if m.record.StartedAt == nil {
+			choices = append(choices, "Import players from YAML")
+		}
+		choices = append(choices, "Export players to YAML")
 		if m.record.Status == store.StatusEnded {
-			choices = []string{"Player info / history"}
+			choices = []string{"Player info / history", "Export players to YAML"}
 		}
 		m.modal = &dialog{kind: dialogMenu, purpose: menuPlayers, title: "Players", choices: choices}
 	case "x", "X":
@@ -474,6 +496,9 @@ func (m *Model) handleRulesKey(key keyEvent) bool {
 func (m *Model) handleBrowserKey(key keyEvent) bool {
 	switch key.Type {
 	case keyEsc:
+		if m.browser.purpose == browseTemplate || m.browser.purpose == browseSaveTemplate {
+			m.templatePlayersChecked = false
+		}
 		m.browser = nil
 		m.screen = m.browserCancel
 	case keyUp:
@@ -501,7 +526,7 @@ func (m *Model) handleBrowserKey(key keyEvent) bool {
 	case keyRunes:
 		switch strings.ToLower(key.String()) {
 		case "n":
-			if m.browser.purpose == browseSaveDatabase || m.browser.purpose == browseSaveTemplate {
+			if m.browser.purpose == browseSaveDatabase || m.browser.purpose == browseSaveTemplate || m.browser.purpose == browseSavePlayers || m.browser.purpose == browseEditorSaveTemplate {
 				m.modal = &dialog{kind: dialogText, title: "New file", prompt: "Filename (Enter for " + m.defaultFilename() + ")", textPurpose: textBrowserFilename}
 			}
 		case "h":
@@ -528,6 +553,18 @@ func (m *Model) browserSelected(path string) {
 			return
 		}
 		m.openTournament(database)
+	case browseEditorTemplate:
+		data, err := os.ReadFile(path)
+		if err != nil {
+			m.showMessage("Template read failed", err.Error())
+			return
+		}
+		template, err := config.ParseTemplate(data)
+		if err != nil {
+			m.showMessage("Invalid template", err.Error())
+			return
+		}
+		m.startEditor(template)
 	case browseTemplate:
 		if m.screen == screenMain {
 			m.saveTemplateImport(path)
@@ -559,7 +596,9 @@ func (m *Model) browserSelected(path string) {
 		} else {
 			m.setStatus("Custom one-minute warning sound saved.", false)
 		}
-	case browseSaveDatabase, browseSaveTemplate:
+	case browsePlayers:
+		m.importPlayersFrom(path)
+	case browseSaveDatabase, browseSaveTemplate, browseSavePlayers, browseEditorSaveTemplate:
 		m.saveBrowserDestination(path, purpose)
 	}
 }
@@ -573,8 +612,20 @@ func (m *Model) saveBrowserDestination(path string, purpose browserPurpose) {
 			return
 		}
 		m.openTournament(database)
+	case browseSavePlayers:
+		m.exportPlayers(path)
+	case browseEditorSaveTemplate:
+		m.saveEditorTemplateFile(path)
 	case browseSaveTemplate:
-		data, err := config.MarshalTemplate(m.record.Config)
+		includePlayers := m.templatePlayersChecked
+		m.templatePlayersChecked = false
+		m.refresh()
+		template := m.record.Config
+		template.Players = nil
+		if includePlayers {
+			template.Players = m.currentRosterPlayers()
+		}
+		data, err := config.MarshalTemplate(template)
 		if err != nil {
 			m.showMessage("Export failed", err.Error())
 			return
@@ -639,8 +690,10 @@ func (m *Model) defaultFilename() string {
 		return -1
 	}, base)
 	switch m.browser.purpose {
-	case browseSaveTemplate:
+	case browseSaveTemplate, browseSavePlayers:
 		return base + ".yaml"
+	case browseEditorSaveTemplate:
+		return "tournament-template.yaml"
 	case browseSaveDatabase:
 		return base + ".sqlite"
 	default:
@@ -821,7 +874,11 @@ func (m *Model) askQuit() {
 	if m.modal != nil {
 		m.suspendedModal = m.modal
 	}
-	m.modal = &dialog{kind: dialogConfirm, title: "Exit Poker Clock?", message: "The clock will be paused and saved. Tournament will not be ended.", confirm: confirmQuit}
+	message := "The clock will be paused and saved. Tournament will not be ended."
+	if m.screen == screenEditor && m.editorDirty {
+		message = "Unsaved tournament editor changes will be lost. Exit?"
+	}
+	m.modal = &dialog{kind: dialogConfirm, title: "Exit Poker Clock?", message: message, confirm: confirmQuit}
 }
 
 func (m *Model) toggleSound() {

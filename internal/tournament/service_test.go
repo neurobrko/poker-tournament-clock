@@ -42,6 +42,42 @@ func TestRegisterPlayerUsesTrimmedUnicodeCaseFoldedIdentity(t *testing.T) {
 	}
 }
 
+func TestPlayerAliasCanBeUpdatedAndCleared(t *testing.T) {
+	service, database := newTestService(t)
+	defer database.Close()
+	ctx := context.Background()
+	player, err := service.RegisterPlayer(ctx, "Alice", false, ActionContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.SetPlayerAlias(ctx, player.ID, "  Ace  ", ActionContext{}); err != nil {
+		t.Fatal(err)
+	}
+	players, err := service.Players(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(players) != 1 || players[0].Alias != "Ace" {
+		t.Fatalf("updated players = %+v", players)
+	}
+	if err := service.SetPlayerAlias(ctx, player.ID, "", ActionContext{}); err != nil {
+		t.Fatal(err)
+	}
+	players, err = service.Players(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if players[0].Alias != "" {
+		t.Fatalf("cleared alias = %q", players[0].Alias)
+	}
+	if err := service.SetPlayerAlias(ctx, player.ID, strings.Repeat("x", store.MaxNameLength+1), ActionContext{}); err == nil {
+		t.Fatal("overlong alias was accepted")
+	}
+	if err := service.SetPlayerAlias(ctx, player.ID, "\x00", ActionContext{}); err == nil {
+		t.Fatal("NUL alias was accepted")
+	}
+}
+
 func TestRemovedPlayerRequiresExplicitRestoreAndKeepsIdentity(t *testing.T) {
 	service, database := newTestService(t)
 	defer database.Close()

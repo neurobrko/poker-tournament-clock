@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +15,551 @@ import (
 	"git.mpx.sk/elvis/poker_clock/internal/store"
 	"git.mpx.sk/elvis/poker_clock/internal/tournament"
 )
+
+func TestTournamentEditorBuildsStructuredTemplateDraft(t *testing.T) {
+	model := NewModel()
+	model.onKey(keyEvent{Type: keyRunes, Runes: []rune{'t'}})
+	if model.modal == nil || model.modal.purpose != menuEditorSource || len(model.modal.choices) != 4 {
+		t.Fatalf("editor source choices = %+v", model.modal)
+	}
+	model.modal.cursor = 2
+	model.chooseMenu(model.modal)
+	if model.screen != screenEditor || len(model.editorTemplate.Schedule) != 0 || model.editorName != "" {
+		t.Fatalf("scratch editor = screen %v, template %+v", model.screen, model.editorTemplate)
+	}
+	model.openEditorForm(editorFormLevel, -1)
+	model.saveEditorForm(model.modal)
+	model.openEditorForm(editorFormBreak, -1)
+	model.saveEditorForm(model.modal)
+	model.openEditorForm(editorFormLevel, -1)
+	model.saveEditorForm(model.modal)
+	model.openEditorForm(editorFormChip, -1)
+	model.modal.formValues["value"], model.modal.formValues["color"] = "5", "red"
+	model.saveEditorForm(model.modal)
+	model.openEditorForm(editorFormLevel, 0)
+	model.modal.formValues["ante_kind"], model.modal.formValues["ante_amount"] = string(config.AntePerPlayer), "1"
+	model.modal.formValues["reminder"] = "Ante begins next level"
+	model.saveEditorForm(model.modal)
+	model.openEditorForm(editorFormBreak, 1)
+	model.modal.formValues["chipup"], model.modal.formValues["reminder"] = "5", "Remove smallest chips"
+	model.saveEditorForm(model.modal)
+	model.openEditorForm(editorFormPlayer, -1)
+	model.modal.formValues["name"], model.modal.formValues["alias"] = "Alice", "Ace"
+	model.saveEditorForm(model.modal)
+	model.openEditorForm(editorFormPrize, 0)
+	model.modal.formValues["percentages"] = "70, 30"
+	model.saveEditorForm(model.modal)
+	model.openEditorForm(editorFormPurchases, -1)
+	model.modal.formValues["initial_price"] = "3.00"
+	model.modal.formValues["rebuys_enabled"] = "false"
+	model.modal.formValues["deadline_at"] = string(config.DeadlineAtBreakEnd)
+	model.modal.formValues["addons_enabled"] = "true"
+	model.modal.formValues["addon_break"] = "1"
+	model.saveEditorForm(model.modal)
+	if err := model.editorTemplate.Validate(); err != nil {
+		t.Fatalf("completed structured draft is invalid: %v", err)
+	}
+	if len(model.editorTemplate.Schedule) != 3 || model.editorTemplate.Players[0] != (config.Player{Name: "Alice", Alias: "Ace"}) || model.editorTemplate.Purchases.InitialBuyIn.Price != 300 {
+		t.Fatalf("structured draft fields were not applied: %+v", model.editorTemplate)
+	}
+	model.moveEditorSchedule(1, 1)
+	if model.editorTemplate.Schedule[1].Kind != config.SegmentLevel || model.editorTemplate.Schedule[2].Kind != config.SegmentBreak {
+		t.Fatal("schedule reorder did not move selected segment")
+	}
+	model.moveEditorSchedule(2, -1)
+	if err := model.editorTemplate.Validate(); err != nil {
+		t.Fatalf("restored schedule order is invalid: %v", err)
+	}
+}
+
+func TestTournamentEditorConfirmsLevelAndPlayerRemoval(t *testing.T) {
+	model := NewModel()
+	template, err := config.DefaultTemplate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	template.Players = []config.Player{{Name: "Alice"}}
+	model.startEditor(template)
+
+	scheduleCount := len(model.editorTemplate.Schedule)
+	model.confirmEditorRemoval(0, editorFormLevel, "Level 1")
+	if model.modal == nil || model.modal.confirm != confirmRemoveEditorItem || len(model.editorTemplate.Schedule) != scheduleCount {
+		t.Fatal("level was removed without confirmation")
+	}
+	model.onKey(keyEvent{Type: keyEsc})
+	if len(model.editorTemplate.Schedule) != scheduleCount {
+		t.Fatal("cancelling level removal changed the schedule")
+	}
+	model.confirmEditorRemoval(0, editorFormLevel, "Level 1")
+	model.onKey(keyEvent{Type: keyEnter})
+	if len(model.editorTemplate.Schedule) != scheduleCount-1 {
+		t.Fatal("confirmed level removal did not update the schedule")
+	}
+
+	model.confirmEditorRemoval(0, editorFormPlayer, "Alice")
+	if model.modal == nil || model.modal.confirm != confirmRemoveEditorItem || len(model.editorTemplate.Players) != 1 {
+		t.Fatal("player was removed without confirmation")
+	}
+	model.onKey(keyEvent{Type: keyEnter})
+	if len(model.editorTemplate.Players) != 0 || !model.editorDirty {
+		t.Fatal("confirmed player removal did not update the draft")
+	}
+
+	chipCount, prizeCount := len(model.editorTemplate.ChipValues), len(model.editorTemplate.PrizeTiers)
+	model.confirmEditorRemoval(0, editorFormChip, "5 · white")
+	if model.modal == nil || len(model.editorTemplate.ChipValues) != chipCount {
+		t.Fatal("chip value was removed without confirmation")
+	}
+	model.onKey(keyEvent{Type: keyEnter})
+	model.confirmEditorRemoval(0, editorFormPrize, "2+ players")
+	if model.modal == nil || len(model.editorTemplate.PrizeTiers) != prizeCount || len(model.editorTemplate.ChipValues) != chipCount-1 {
+		t.Fatal("confirmed chip removal did not update the draft")
+	}
+	model.onKey(keyEvent{Type: keyEnter})
+	if len(model.editorTemplate.PrizeTiers) != prizeCount-1 {
+		t.Fatal("confirmed prize-tier removal did not update the draft")
+	}
+}
+
+func TestEditorDeadlineTargetNamesLevelOrBreak(t *testing.T) {
+	if got := editorDeadlineTargetLabel(string(config.DeadlineAtLevelStart)); got != "Deadline level number" {
+		t.Fatalf("level deadline label = %q", got)
+	}
+	if got := editorDeadlineTargetLabel(string(config.DeadlineAtBreakEnd)); got != "Deadline break number" {
+		t.Fatalf("break deadline label = %q", got)
+	}
+}
+
+func TestPrizeEditorRequiresPercentagesToSumTo100(t *testing.T) {
+	model := NewModel()
+	template, err := config.DefaultTemplate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	model.startEditor(template)
+	model.openEditorForm(editorFormPrize, 0)
+	original := append([]config.Percentage(nil), model.editorTemplate.PrizeTiers[0].Percentages...)
+	model.modal.formValues["percentages"] = "70, 20"
+	model.saveEditorForm(model.modal)
+	if model.modal == nil || !reflect.DeepEqual(model.editorTemplate.PrizeTiers[0].Percentages, original) {
+		t.Fatal("invalid prize percentages were accepted")
+	}
+	model.modal.formValues["percentages"] = "70, 30"
+	model.saveEditorForm(model.modal)
+	percentages := model.editorTemplate.PrizeTiers[0].Percentages
+	if model.modal != nil || len(percentages) != 2 || percentages[0] != "70" || percentages[1] != "30" {
+		t.Fatalf("valid percentages were not saved: %+v", percentages)
+	}
+}
+
+func TestTournamentEditorSavesNamelessTemplateAndCanCreateAfterSave(t *testing.T) {
+	model := NewModel()
+	template, err := config.DefaultTemplate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	model.startEditor(template)
+	model.editorName = "Sunday game"
+	model.editorAfterSave = true
+	model.saveEditorTemplate()
+	if model.browser == nil || model.browser.purpose != browseEditorSaveTemplate {
+		t.Fatalf("save template browser = %+v", model.browser)
+	}
+	path := filepath.Join(t.TempDir(), "saved.yaml")
+	model.saveEditorTemplateFile(path)
+	saved, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := config.ParseTemplate(saved); err != nil {
+		t.Fatal(err)
+	}
+	if model.browser == nil || model.browser.purpose != browseSaveDatabase || model.pendingName != "Sunday game" {
+		t.Fatalf("create-after-save flow: browser=%+v name=%q", model.browser, model.pendingName)
+	}
+	model.onKey(keyEvent{Type: keyEsc})
+	if model.screen != screenEditor {
+		t.Fatalf("cancelled post-save creation returned to %v", model.screen)
+	}
+	model.editorAfterSave = false
+	model.createEditorTournament()
+	if model.browser == nil || model.browser.purpose != browseSaveDatabase {
+		t.Fatalf("direct create browser = %+v", model.browser)
+	}
+}
+
+func TestTemplateImportExportPlayerCheckboxDefaultsOff(t *testing.T) {
+	model := NewModel()
+	model.screen = screenMain
+	model.chooseSettings(0)
+	if model.modal == nil || model.modal.kind != dialogTemplateOptions || model.modal.includePlayers || !strings.Contains(model.modal.message, "Import will change the current roster") || !strings.Contains(model.modal.message, "export will include the current roster") {
+		t.Fatalf("template export options = %+v", model.modal)
+	}
+	model.onKey(keyEvent{Type: keySpace})
+	if !model.modal.includePlayers {
+		t.Fatal("Space did not check the player roster option")
+	}
+	model.onKey(keyEvent{Type: keyEnter})
+	if model.browser == nil || model.browser.purpose != browseSaveTemplate || !model.templatePlayersChecked {
+		t.Fatalf("checked export options = browser %+v checked=%t", model.browser, model.templatePlayersChecked)
+	}
+	model.onKey(keyEvent{Type: keyEsc})
+	if model.browser != nil || model.templatePlayersChecked {
+		t.Fatal("cancelled template export kept the roster checkbox set")
+	}
+	model.chooseSettings(1)
+	if model.modal == nil || model.modal.includePlayers {
+		t.Fatalf("template import checkbox was not unchecked: %+v", model.modal)
+	}
+	model.onKey(keyEvent{Type: keyEnter})
+	if model.browser == nil || model.browser.purpose != browseTemplate || model.templatePlayersChecked {
+		t.Fatalf("default import options = browser %+v checked=%t", model.browser, model.templatePlayersChecked)
+	}
+	model.onKey(keyEvent{Type: keyEsc})
+}
+
+func TestTemplateImportWithoutCheckboxIgnoresTemplateRoster(t *testing.T) {
+	ctx := context.Background()
+	template, err := config.DefaultTemplate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	database, err := store.Create(ctx, filepath.Join(t.TempDir(), "template-roster-skip.sqlite"), "Import", template)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	model := NewModel()
+	model.database, model.service = database, tournament.NewService(database)
+	imported := template
+	imported.Players = []config.Player{{Name: "Not imported"}}
+	data, err := config.MarshalTemplate(imported)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "template.yaml")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	model.saveTemplateImport(path)
+	players, err := model.service.Players(ctx, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(players) != 0 || len(model.record.Config.Players) != 0 {
+		t.Fatalf("unchecked template import included players: roster=%+v config=%+v", players, model.record.Config.Players)
+	}
+}
+
+func TestTemplateImportCheckboxMergesRosterAfterConflictChoices(t *testing.T) {
+	ctx := context.Background()
+	template, err := config.DefaultTemplate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	database, err := store.Create(ctx, filepath.Join(t.TempDir(), "template-roster-import.sqlite"), "Import", template)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	service := tournament.NewService(database)
+	alice, err := service.RegisterPlayer(ctx, "Alice", false, tournament.ActionContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.SetPlayerAlias(ctx, alice.ID, "Old", tournament.ActionContext{}); err != nil {
+		t.Fatal(err)
+	}
+	model := NewModel()
+	model.screen, model.database, model.service = screenMain, database, service
+	model.refresh()
+	imported := template
+	imported.Purchases.AddOn.Chips = 6000
+	imported.Players = []config.Player{{Name: "Alice", Alias: "Ace"}, {Name: "Bob", Alias: "Bee"}}
+	data, err := config.MarshalTemplate(imported)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "template.yaml")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	model.templatePlayersChecked = true
+	model.saveTemplateImport(path)
+	if model.modal == nil || model.modal.purpose != menuPlayerImportConflict || model.record.Config.Purchases.AddOn.Chips != 5000 {
+		t.Fatalf("import applied before roster conflict choice: modal=%+v chips=%d", model.modal, model.record.Config.Purchases.AddOn.Chips)
+	}
+	model.modal.cursor = 1
+	model.chooseMenu(model.modal)
+	players, err := service.Players(ctx, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if model.record.Config.Purchases.AddOn.Chips != 6000 || len(players) != 2 || players[0].Alias != "Ace" || players[1].Name != "Bob" {
+		t.Fatalf("template/roster import result: chips=%d players=%+v", model.record.Config.Purchases.AddOn.Chips, players)
+	}
+}
+
+func TestTemplateExportCheckboxUsesCurrentNonRemovedRoster(t *testing.T) {
+	ctx := context.Background()
+	template, err := config.DefaultTemplate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	template.Players = []config.Player{{Name: "Seed"}}
+	database, err := store.Create(ctx, filepath.Join(t.TempDir(), "template-roster-export.sqlite"), "Export", template)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	service := tournament.NewService(database)
+	seeded, err := service.Players(ctx, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.RemovePlayer(ctx, seeded[0].ID, "not attending", tournament.ActionContext{}); err != nil {
+		t.Fatal(err)
+	}
+	current, err := service.RegisterPlayer(ctx, "Current", false, tournament.ActionContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.SetPlayerAlias(ctx, current.ID, "C", tournament.ActionContext{}); err != nil {
+		t.Fatal(err)
+	}
+	model := NewModel()
+	model.database, model.service = database, service
+	uncheckedPath := filepath.Join(t.TempDir(), "export-without-players.yaml")
+	model.saveBrowserDestination(uncheckedPath, browseSaveTemplate)
+	uncheckedData, err := os.ReadFile(uncheckedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unchecked, err := config.ParseTemplate(uncheckedData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(unchecked.Players) != 0 {
+		t.Fatalf("unchecked export included players: %+v", unchecked.Players)
+	}
+	path := filepath.Join(t.TempDir(), "export.yaml")
+	model.templatePlayersChecked = true
+	model.saveBrowserDestination(path, browseSaveTemplate)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exported, err := config.ParseTemplate(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(exported.Players, []config.Player{{Name: "Current", Alias: "C"}}) {
+		t.Fatalf("template exported roster = %+v", exported.Players)
+	}
+}
+
+func TestPlayerAliasesAppearOnlyInPlayersMenuAndCanBeEdited(t *testing.T) {
+	model := NewModel()
+	model.players = []tournament.Player{{ID: "alice", Name: "Alice", Alias: "Ace", Active: true}}
+	labels := playerDialogLabels(model, &dialog{purpose: selectInfo, players: model.players})
+	if len(labels) != 1 || labels[0] != "Alice (Ace) · active" {
+		t.Fatalf("players menu label = %v", labels)
+	}
+	labels = playerDialogLabels(model, &dialog{purpose: selectPurchase, players: model.players})
+	if len(labels) != 1 || labels[0] != "Alice · active" {
+		t.Fatalf("non-players menu unexpectedly showed alias: %v", labels)
+	}
+	model.screen = screenMain
+	model.record.Status = store.StatusNotStarted
+	model.onKey(keyEvent{Type: keyRunes, Runes: []rune{'p'}})
+	menu := model.modal
+	if len(menu.choices) != 8 || menu.choices[5] != "Edit player alias" || menu.choices[6] != "Import players from YAML" || menu.choices[7] != "Export players to YAML" {
+		t.Fatalf("players menu choices = %v", menu.choices)
+	}
+	menu.cursor = 5
+	model.chooseMenu(menu)
+	if model.modal.purpose != selectAlias || len(model.modal.players) != 1 {
+		t.Fatalf("alias editor selection = %+v", model.modal)
+	}
+	model.choosePlayer(model.modal, model.players[0])
+	if model.modal.textPurpose != textPlayerAlias || model.modal.input != "Ace" {
+		t.Fatalf("alias editor dialog = %+v", model.modal)
+	}
+}
+
+func TestPlayerYAMLImportResolvesConflictsBeforeApplyingRosterMerge(t *testing.T) {
+	ctx := context.Background()
+	template, err := config.DefaultTemplate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	database, err := store.Create(ctx, filepath.Join(t.TempDir(), "player-import.sqlite"), "Import", template)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	service := tournament.NewService(database)
+	alice, err := service.RegisterPlayer(ctx, "Alice", false, tournament.ActionContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.SetPlayerAlias(ctx, alice.ID, "Old", tournament.ActionContext{}); err != nil {
+		t.Fatal(err)
+	}
+	model := NewModel()
+	model.screen, model.database, model.service = screenMain, database, service
+	model.refresh()
+	path := filepath.Join(t.TempDir(), "players.yaml")
+	if err := os.WriteFile(path, []byte("- name: Alice\n  alias: Ace\n- name: Bob\n  alias: Bee\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	model.importPlayersFrom(path)
+	if model.modal == nil || model.modal.purpose != menuPlayerImportConflict {
+		t.Fatalf("import did not prompt for existing player: %+v", model.modal)
+	}
+	before, err := service.Players(ctx, true)
+	if err != nil || len(before) != 1 {
+		t.Fatalf("roster changed before conflicts were resolved: players=%+v err=%v", before, err)
+	}
+	model.modal.cursor = 1
+	model.chooseMenu(model.modal)
+	players, err := service.Players(ctx, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(players) != 2 || players[0].Alias != "Ace" || players[1].Name != "Bob" || players[1].Alias != "Bee" || players[1].HasInitialBuyIn {
+		t.Fatalf("merged roster = %+v", players)
+	}
+
+	if err := os.WriteFile(path, []byte("- name: Alice\n  alias: Not applied\n- name: Carol\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	model.importPlayersFrom(path)
+	model.modal.cursor = 2
+	model.chooseMenu(model.modal)
+	players, err = service.Players(ctx, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(players) != 2 || players[0].Alias != "Ace" {
+		t.Fatalf("cancelled import changed roster: %+v", players)
+	}
+}
+
+func TestPlayerYAMLImportCanRestoreRemovedPlayer(t *testing.T) {
+	ctx := context.Background()
+	template, err := config.DefaultTemplate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	database, err := store.Create(ctx, filepath.Join(t.TempDir(), "player-restore.sqlite"), "Restore", template)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	service := tournament.NewService(database)
+	removed, err := service.RegisterPlayer(ctx, "Sam", false, tournament.ActionContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.RemovePlayer(ctx, removed.ID, "mistake", tournament.ActionContext{}); err != nil {
+		t.Fatal(err)
+	}
+	model := NewModel()
+	model.screen, model.database, model.service = screenMain, database, service
+	model.refresh()
+	path := filepath.Join(t.TempDir(), "restore.yaml")
+	if err := os.WriteFile(path, []byte("- name: Sam\n  alias: Sammy\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	model.importPlayersFrom(path)
+	if model.modal == nil || len(model.modal.choices) != 3 || model.modal.choices[0] != "Restore and update alias" {
+		t.Fatalf("removed player choices = %+v", model.modal)
+	}
+	model.chooseMenu(model.modal)
+	players, err := service.Players(ctx, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(players) != 1 || players[0].Removed || players[0].ID != removed.ID || players[0].Alias != "Sammy" {
+		t.Fatalf("restored player = %+v", players)
+	}
+}
+
+func TestPlayerYAMLExportOmitsRemovedPlayers(t *testing.T) {
+	ctx := context.Background()
+	template, err := config.DefaultTemplate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	database, err := store.Create(ctx, filepath.Join(t.TempDir(), "player-export.sqlite"), "Export", template)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	service := tournament.NewService(database)
+	kept, err := service.RegisterPlayer(ctx, "Keep", false, tournament.ActionContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.SetPlayerAlias(ctx, kept.ID, "K", tournament.ActionContext{}); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := service.RegisterPlayer(ctx, "Removed", false, tournament.ActionContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.RemovePlayer(ctx, removed.ID, "mistake", tournament.ActionContext{}); err != nil {
+		t.Fatal(err)
+	}
+	model := NewModel()
+	model.database, model.service = database, service
+	model.refresh()
+	path := filepath.Join(t.TempDir(), "export.yaml")
+	model.exportPlayers(path)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	players, err := config.ParsePlayersYAML(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(players, []config.Player{{Name: "Keep", Alias: "K"}}) {
+		t.Fatalf("exported players = %+v", players)
+	}
+}
+
+func TestPlayerYAMLImportIsBlockedAfterTournamentStarts(t *testing.T) {
+	model, database, service := newRunningModel(t)
+	defer database.Close()
+	model.service = service
+	path := filepath.Join(t.TempDir(), "players.yaml")
+	if err := os.WriteFile(path, []byte("- name: Late player\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	model.importPlayersFrom(path)
+	if model.modal == nil || model.modal.title != "Import unavailable" {
+		t.Fatalf("started tournament import result = %+v", model.modal)
+	}
+	players, err := service.Players(context.Background(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, player := range players {
+		if player.Name == "Late player" {
+			t.Fatal("player was imported after tournament start")
+		}
+	}
+}
+
+func TestReminderDisplayTruncatesAfter99Characters(t *testing.T) {
+	long := strings.Repeat("界", 100)
+	_, got := segmentReminderLines(config.Segment{Reminder: long})
+	if want := strings.Repeat("界", 99) + "..."; got != want {
+		t.Fatalf("truncated reminder = %q, want %q", got, want)
+	}
+}
 
 func TestChipUpAndReminderAreKeptOnSeparateLines(t *testing.T) {
 	segment := config.Segment{Kind: config.SegmentBreak, ChipUp: 25, Reminder: "Registration closes soon"}
@@ -466,7 +1012,7 @@ func TestEndedTournamentKeepsMouseAccessibleReadOnlyPlayerHistory(t *testing.T) 
 	model.record.Status = store.StatusEnded
 	model.players = []tournament.Player{{ID: "p", Name: "Player"}}
 	model.onKey(keyEvent{Type: keyRunes, Runes: []rune{'p'}})
-	if model.modal == nil || len(model.modal.choices) != 1 || model.modal.choices[0] != "Player info / history" {
+	if model.modal == nil || len(model.modal.choices) != 2 || model.modal.choices[0] != "Player info / history" || model.modal.choices[1] != "Export players to YAML" {
 		t.Fatalf("ended players menu = %+v", model.modal)
 	}
 	model.chooseMenu(model.modal)
@@ -558,6 +1104,20 @@ func TestFileBrowserFilteringSaveAndBounds(t *testing.T) {
 	}
 	if path, err := saver.newPath("new-rules"); err != nil || filepath.Ext(path) != ".yaml" {
 		t.Fatalf("new template path=%q err=%v", path, err)
+	}
+	playerSaver, err := newFileBrowser(browseSavePlayers, directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path, err := playerSaver.newPath("players"); err != nil || filepath.Ext(path) != ".yaml" {
+		t.Fatalf("new player list path=%q err=%v", path, err)
+	}
+	editorSaver, err := newFileBrowser(browseEditorSaveTemplate, directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path, err := editorSaver.newPath("tournament-template"); err != nil || filepath.Ext(path) != ".yaml" {
+		t.Fatalf("new editor template path=%q err=%v", path, err)
 	}
 	for i := 0; i < 5; i++ {
 		browser.entries = append(browser.entries, browserEntry{name: fmt.Sprintf("%d.yaml", i), selectable: true})

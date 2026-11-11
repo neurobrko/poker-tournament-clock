@@ -32,6 +32,7 @@ var (
 type Player struct {
 	ID              string
 	Name            string
+	Alias           string
 	Active          bool
 	SittingOut      bool
 	Removed         bool
@@ -53,6 +54,9 @@ func NewService(database *store.Store) *Service { return &Service{store: databas
 // NormalizePlayerName trims whitespace, applies Unicode NFC, then Unicode case folding.
 func NormalizePlayerName(name string) (display, key string, err error) {
 	display = norm.NFC.String(strings.TrimSpace(name))
+	if strings.ContainsRune(display, '\x00') {
+		return "", "", fmt.Errorf("player name cannot contain NUL")
+	}
 	if display == "" {
 		return "", "", fmt.Errorf("player name is required")
 	}
@@ -123,7 +127,7 @@ func insertPlayerEvent(ctx context.Context, tx *sql.Tx, eventID int64, playerID,
 func (s *Service) Players(ctx context.Context, includeRemoved bool) ([]Player, error) {
 	players := make([]Player, 0)
 	err := s.store.ViewTx(ctx, func(tx *sql.Tx) error {
-		query := `SELECT p.id, p.name, p.active, p.sitting_out, p.removed,
+		query := `SELECT p.id, p.name, p.alias, p.active, p.sitting_out, p.removed,
 			EXISTS (SELECT 1 FROM purchases b WHERE b.player_id = p.id AND b.kind = 'initial_buy_in' AND b.voided_by_event_id IS NULL),
 			EXISTS (SELECT 1 FROM purchases a WHERE a.player_id = p.id AND a.kind = 'add_on' AND a.voided_by_event_id IS NULL)
 			FROM players p`
@@ -139,7 +143,7 @@ func (s *Service) Players(ctx context.Context, includeRemoved bool) ([]Player, e
 		for rows.Next() {
 			var player Player
 			var active, sittingOut, removed, entrant, addon int
-			if err := rows.Scan(&player.ID, &player.Name, &active, &sittingOut, &removed, &entrant, &addon); err != nil {
+			if err := rows.Scan(&player.ID, &player.Name, &player.Alias, &active, &sittingOut, &removed, &entrant, &addon); err != nil {
 				return err
 			}
 			player.Active = active != 0
@@ -232,6 +236,38 @@ func (s *Service) RegisterPlayer(ctx context.Context, name string, restoreRemove
 		return Player{}, err
 	}
 	return Player{ID: id, Name: display}, nil
+}
+
+// SetPlayerAlias updates the optional alias without changing the player's identity.
+func (s *Service) SetPlayerAlias(ctx context.Context, playerID, alias string, action ActionContext) error {
+	alias = strings.TrimSpace(alias)
+	if strings.ContainsRune(alias, '\x00') || len([]rune(alias)) > store.MaxNameLength {
+		return fmt.Errorf("player alias cannot exceed %d characters or contain NUL", store.MaxNameLength)
+	}
+	event, checkpoint := action.event("player_alias_changed", map[string]string{"player_id": playerID, "alias": alias}, "")
+	_, err := s.store.CommitEvent(ctx, event, checkpoint, func(tx *sql.Tx, eventID int64) error {
+		if err := s.ensureActionClock(ctx, tx, action); err != nil {
+			return err
+		}
+		if err := ensureNotEnded(ctx, tx); err != nil {
+			return err
+		}
+		var removed int
+		if err := tx.QueryRowContext(ctx, "SELECT removed FROM players WHERE id = ?", playerID).Scan(&removed); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrPlayerNotFound
+			}
+			return err
+		}
+		if removed != 0 {
+			return ErrPlayerRemoved
+		}
+		if _, err := tx.ExecContext(ctx, "UPDATE players SET alias = ? WHERE id = ?", alias, playerID); err != nil {
+			return err
+		}
+		return insertPlayerEvent(ctx, tx, eventID, playerID, "player_alias_changed")
+	})
+	return err
 }
 
 // RenamePlayer changes the display name without changing its stable identity.
@@ -377,7 +413,7 @@ func playerDependencies(ctx context.Context, tx *sql.Tx, playerID string) ([]str
 		},
 		{
 			query: `SELECT pe.kind || ' event #' || pe.event_id FROM player_events pe
-				WHERE pe.player_id = ? AND pe.kind NOT IN ('player_created', 'player_restored', 'player_removed')
+				WHERE pe.player_id = ? AND pe.kind NOT IN ('player_created', 'player_restored', 'player_removed', 'player_alias_changed')
 				AND NOT EXISTS (SELECT 1 FROM audit_events v WHERE v.voids_event_id = pe.event_id)`,
 			args: []any{playerID},
 		},

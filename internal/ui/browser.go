@@ -17,6 +17,10 @@ const (
 	browseSaveTemplate
 	browseLevelSound
 	browseMinuteSound
+	browsePlayers
+	browseSavePlayers
+	browseEditorTemplate
+	browseEditorSaveTemplate
 )
 
 type browserEntry struct {
@@ -76,7 +80,7 @@ func (b *fileBrowser) reload() error {
 			entries = append(entries, browserEntry{name: name + string(os.PathSeparator), path: path, dir: true, selectable: true})
 			continue
 		}
-		selectable := b.matches(name) && b.purpose != browseSaveDatabase && b.purpose != browseSaveTemplate
+		selectable := b.matches(name) && b.purpose != browseSaveDatabase && b.purpose != browseSaveTemplate && b.purpose != browseSavePlayers && b.purpose != browseEditorSaveTemplate
 		if !selectable && !b.showUnsupported {
 			continue
 		}
@@ -112,7 +116,7 @@ func (b *fileBrowser) toggleUnsupported() error {
 func (b *fileBrowser) matches(name string) bool {
 	ext := strings.ToLower(filepath.Ext(name))
 	switch b.purpose {
-	case browseTemplate, browseSaveTemplate:
+	case browseTemplate, browseSaveTemplate, browsePlayers, browseSavePlayers, browseEditorTemplate, browseEditorSaveTemplate:
 		return ext == ".yaml" || ext == ".yml"
 	case browseTournamentDB:
 		return ext == ".sqlite" || ext == ".sqlite3" || ext == ".db"
@@ -150,7 +154,7 @@ func (b *fileBrowser) enter() (string, bool, error) {
 		}
 		return "", false, nil
 	}
-	if b.purpose == browseSaveDatabase || b.purpose == browseSaveTemplate {
+	if b.purpose == browseSaveDatabase || b.purpose == browseSaveTemplate || b.purpose == browseSavePlayers || b.purpose == browseEditorSaveTemplate {
 		return "", false, fmt.Errorf("choose a new filename with N; existing files are never overwritten")
 	}
 	if !entry.selectable {
@@ -167,11 +171,11 @@ func (b *fileBrowser) newPath(filename string) (string, error) {
 	if b.purpose == browseSaveDatabase && filepath.Ext(filename) == "" {
 		filename += ".sqlite"
 	}
-	if b.purpose == browseSaveTemplate && filepath.Ext(filename) == "" {
+	if (b.purpose == browseSaveTemplate || b.purpose == browseSavePlayers || b.purpose == browseEditorSaveTemplate) && filepath.Ext(filename) == "" {
 		filename += ".yaml"
 	}
-	if b.purpose == browseSaveTemplate && !b.matches(filename) {
-		return "", fmt.Errorf("template filename must end in .yaml or .yml")
+	if (b.purpose == browseSaveTemplate || b.purpose == browseSavePlayers || b.purpose == browseEditorSaveTemplate) && !b.matches(filename) {
+		return "", fmt.Errorf("filename must end in .yaml or .yml")
 	}
 	if b.purpose == browseSaveDatabase && !strings.EqualFold(filepath.Ext(filename), ".db") && !strings.EqualFold(filepath.Ext(filename), ".sqlite") && !strings.EqualFold(filepath.Ext(filename), ".sqlite3") {
 		return "", fmt.Errorf("database filename must end in .db, .sqlite, or .sqlite3")

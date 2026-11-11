@@ -14,12 +14,16 @@ func browserTitle(purpose browserPurpose) string {
 	switch purpose {
 	case browseTournamentDB:
 		return "LOAD TOURNAMENT DATABASE (.db / .sqlite)"
-	case browseTemplate:
+	case browseTemplate, browseEditorTemplate:
 		return "SELECT YAML TEMPLATE (.yaml / .yml)"
 	case browseSaveDatabase:
 		return "NEW TOURNAMENT DATABASE"
-	case browseSaveTemplate:
+	case browseSaveTemplate, browseEditorSaveTemplate:
 		return "EXPORT TEMPLATE"
+	case browsePlayers:
+		return "IMPORT PLAYER ROSTER (.yaml / .yml)"
+	case browseSavePlayers:
+		return "EXPORT PLAYER ROSTER"
 	case browseLevelSound:
 		return "SELECT END-OF-LEVEL SOUND (.wav / .mp3)"
 	case browseMinuteSound:
@@ -113,7 +117,7 @@ func formatChips(value int64) string {
 }
 
 func segmentReminderLines(segment config.Segment) (chipUp, reminder string) {
-	reminder = strings.TrimSpace(segment.Reminder)
+	reminder = truncateReminder(strings.TrimSpace(segment.Reminder))
 	if segment.ChipUp > 0 {
 		return fmt.Sprintf("Chip up! (%s)", formatDisplayChips(segment.ChipUp)), reminder
 	}
@@ -121,6 +125,14 @@ func segmentReminderLines(segment config.Segment) (chipUp, reminder string) {
 		return formatted, ""
 	}
 	return "", reminder
+}
+
+func truncateReminder(reminder string) string {
+	runes := []rune(reminder)
+	if len(runes) > 99 {
+		return string(runes[:99]) + "..."
+	}
+	return reminder
 }
 
 func formatChipUpReminder(reminder string) string {

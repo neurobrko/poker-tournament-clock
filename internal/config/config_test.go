@@ -85,6 +85,57 @@ func TestDefaultTemplate(t *testing.T) {
 	}
 }
 
+func TestTemplatePlayersSupportAliasesAndValidateNames(t *testing.T) {
+	template, err := DefaultTemplate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	template.Players = []Player{{Name: "Alice", Alias: "The Ace"}, {Name: "Bob"}}
+	data, err := MarshalTemplate(template)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := ParseTemplate(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(parsed.Players, template.Players) {
+		t.Fatalf("template players = %+v, want %+v", parsed.Players, template.Players)
+	}
+	for _, players := range [][]Player{
+		{{Name: "Alice"}, {Name: " alice "}},
+		{{Name: "   "}},
+		{{Name: "\x00"}},
+		{{Name: "A", Alias: strings.Repeat("x", MaxPlayerNameLength+1)}},
+		{{Name: "A", Alias: "\x00"}},
+	} {
+		template.Players = players
+		if err := template.Validate(); err == nil {
+			t.Errorf("invalid players accepted: %+v", players)
+		}
+	}
+}
+
+func TestPlayersYAMLRoundTripAndRejectsUnknownFields(t *testing.T) {
+	players := []Player{{Name: "Alice", Alias: "Ace"}, {Name: "Bob"}}
+	data, err := MarshalPlayersYAML(players)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := ParsePlayersYAML(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, players) {
+		t.Fatalf("parsed players = %+v, want %+v", got, players)
+	}
+	for _, invalid := range []string{"- name: Alice\n  unknown: true\n", "- name: Alice\n---\n- name: Bob\n"} {
+		if _, err := ParsePlayersYAML([]byte(invalid)); err == nil {
+			t.Errorf("ParsePlayersYAML accepted %q", invalid)
+		}
+	}
+}
+
 func TestChipValuesAreOptionalAndColorsAcceptHTMLNamesAndHex(t *testing.T) {
 	template, err := DefaultTemplate()
 	if err != nil {

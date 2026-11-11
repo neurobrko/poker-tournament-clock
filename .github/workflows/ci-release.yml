@@ -11,7 +11,14 @@ permissions:
   contents: read
 
 jobs:
+  gitea-notice:
+    if: github.server_url != 'https://github.com'
+    runs-on: ubuntu-24.04
+    steps:
+      - run: echo "Build, test, and release workflows run on GitHub Actions."
+
   checks:
+    if: github.server_url == 'https://github.com'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -29,7 +36,7 @@ jobs:
         run: go build -trimpath -o /tmp/poker-clock-ci ./cmd/poker-clock
 
   build:
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'pull_request'
+    if: github.server_url == 'https://github.com' && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'pull_request')
     needs: checks
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -112,7 +119,7 @@ jobs:
           retention-days: 1
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.server_url == 'https://github.com' && startsWith(github.ref, 'refs/tags/v')
     needs: build
     runs-on: ubuntu-24.04
     permissions:

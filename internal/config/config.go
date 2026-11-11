@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"golang.org/x/image/colornames"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/unicode/norm"
 	"gopkg.in/yaml.v3"
 )
 
@@ -113,6 +115,7 @@ type Template struct {
 	Purchases    PurchaseConfig     `yaml:"purchases"`
 	Registration RegistrationConfig `yaml:"registration"`
 	ChipValues   []ChipValue        `yaml:"chip_values,omitempty"`
+	Players      []Player           `yaml:"players,omitempty"`
 	Schedule     []Segment          `yaml:"schedule"`
 	PrizeTiers   []PrizeTier        `yaml:"prize_tiers"`
 }
@@ -120,6 +123,13 @@ type Template struct {
 type ChipValue struct {
 	Value int64  `yaml:"value"`
 	Color string `yaml:"color"`
+}
+
+const MaxPlayerNameLength = 80
+
+type Player struct {
+	Name  string `yaml:"name"`
+	Alias string `yaml:"alias,omitempty"`
 }
 
 type PurchaseConfig struct {
@@ -243,11 +253,45 @@ func MarshalTemplate(template Template) ([]byte, error) {
 	return data, nil
 }
 
+func ParsePlayersYAML(data []byte) ([]Player, error) {
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder.KnownFields(true)
+	var players []Player
+	if err := decoder.Decode(&players); err != nil {
+		return nil, fmt.Errorf("decode player list: %w", err)
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return nil, fmt.Errorf("player list must contain exactly one YAML document")
+		}
+		return nil, fmt.Errorf("decode trailing player list document: %w", err)
+	}
+	if err := validatePlayers(players); err != nil {
+		return nil, err
+	}
+	return players, nil
+}
+
+func MarshalPlayersYAML(players []Player) ([]byte, error) {
+	if err := validatePlayers(players); err != nil {
+		return nil, err
+	}
+	data, err := yaml.Marshal(players)
+	if err != nil {
+		return nil, fmt.Errorf("encode player list: %w", err)
+	}
+	return data, nil
+}
+
 func (t Template) Validate() error {
 	if t.Version != CurrentVersion {
 		return fmt.Errorf("unsupported template version %d (supported: %d)", t.Version, CurrentVersion)
 	}
 	if err := validateChipValues(t.ChipValues); err != nil {
+		return err
+	}
+	if err := validatePlayers(t.Players); err != nil {
 		return err
 	}
 	if err := validatePurchase("initial buy-in", t.Purchases.InitialBuyIn); err != nil {
@@ -266,6 +310,26 @@ func (t Template) Validate() error {
 		return err
 	}
 	return t.validatePrizeTiers()
+}
+
+func validatePlayers(players []Player) error {
+	seen := make(map[string]bool, len(players))
+	for index, player := range players {
+		name := norm.NFC.String(strings.TrimSpace(player.Name))
+		if name == "" || strings.ContainsRune(name, '\x00') || len([]rune(name)) > MaxPlayerNameLength {
+			return fmt.Errorf("players item %d name must contain 1 to %d characters and no NUL", index+1, MaxPlayerNameLength)
+		}
+		key := norm.NFC.String(cases.Fold().String(name))
+		if seen[key] {
+			return fmt.Errorf("players item %d duplicates name %q", index+1, player.Name)
+		}
+		seen[key] = true
+		alias := strings.TrimSpace(player.Alias)
+		if strings.ContainsRune(alias, '\x00') || len([]rune(alias)) > MaxPlayerNameLength {
+			return fmt.Errorf("players item %d alias cannot exceed %d characters or contain NUL", index+1, MaxPlayerNameLength)
+		}
+	}
+	return nil
 }
 
 func validateChipValues(chips []ChipValue) error {

@@ -86,4 +86,13 @@ func TestOpenUpgradesVersionOneDatabaseThroughCurrentMigrations(t *testing.T) {
 	if tableCount != 3 {
 		t.Fatalf("migrated domain tables = %d, want 3", tableCount)
 	}
+	var aliasColumnCount int
+	if err := migrated.ViewTx(ctx, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('players') WHERE name = 'alias'`).Scan(&aliasColumnCount)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if aliasColumnCount != 1 {
+		t.Fatalf("migrated players alias columns = %d, want 1", aliasColumnCount)
+	}
 }

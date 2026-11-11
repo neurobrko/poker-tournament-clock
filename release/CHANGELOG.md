@@ -2,6 +2,20 @@
 
 Notable changes for each release. This project follows the spirit of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow `vMAJOR.MINOR.PATCH`.
 
+## [Unreleased]
+
+### Added
+
+- Structured tournament editor, optional template-seeded player rosters, YAML roster import/export, player aliases, and a read-only dual-screen dashboard.
+
+### Fixed
+
+- Validate malformed prize percentages without panicking; keep dual-screen controls read-only and its clock/configuration display current; make roster/settings imports atomic; allow alias-only players to be removed; isolate editor confirmations from background fields.
+
+### Upgrade notes
+
+- Opening a tournament database applies schema migration 5 for player aliases. Back up databases before upgrading. Databases migrated by this release cannot be opened by older schema-4 binaries; restore a pre-upgrade backup to roll back.
+
 ## [0.0.1] - 2026-11-05
 
 Initial release.

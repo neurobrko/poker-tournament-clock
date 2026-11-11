@@ -46,6 +46,10 @@ func (d *desktop) modalBody(modal *dialog) fyne.CanvasObject {
 	switch modal.kind {
 	case dialogText:
 		return d.textDialog(modal)
+	case dialogTemplateOptions:
+		return d.templateOptionsDialog(modal)
+	case dialogEditorForm:
+		return d.editorFormDialog(modal)
 	case dialogConfirm:
 		return d.confirmDialog()
 	case dialogMessage:
@@ -69,15 +73,25 @@ func (d *desktop) modalBody(modal *dialog) fyne.CanvasObject {
 	}
 }
 
+func (d *desktop) templateOptionsDialog(modal *dialog) fyne.CanvasObject {
+	players := widget.NewCheck("Import/export players", func(checked bool) { modal.includePlayers = checked })
+	players.SetChecked(modal.includePlayers)
+	continueButton := d.modalButton("Continue", func() { d.dispatchKey(keyEvent{Type: keyEnter}) })
+	continueButton.Importance = widget.HighImportance
+	cancelButton := d.modalButton("Cancel", func() { d.closeModal() })
+	return container.NewVBox(players, container.NewHBox(layout.NewSpacer(), cancelButton, continueButton))
+}
+
 func (d *desktop) textDialog(modal *dialog) fyne.CanvasObject {
 	prompt := widget.NewLabel(modal.prompt)
 	prompt.Wrapping = fyne.TextWrapWord
-	entry := widget.NewEntry()
+	d.entry = newDesktopEntry()
+	entry := d.entry.Entry
 	entry.SetText(modal.input)
 	entry.SetPlaceHolder(modal.prompt)
 	entry.OnChanged = func(value string) { modal.input = value }
 	maxChars := 200
-	if modal.textPurpose == textTournamentName || modal.textPurpose == textTournamentNameRename || modal.textPurpose == textAddPlayer || modal.textPurpose == textRenamePlayer {
+	if modal.textPurpose == textTournamentName || modal.textPurpose == textTournamentNameRename || modal.textPurpose == textAddPlayer || modal.textPurpose == textRenamePlayer || modal.textPurpose == textPlayerAlias {
 		maxChars = store.MaxNameLength
 	}
 	entry.Validator = func(value string) error {
@@ -86,11 +100,8 @@ func (d *desktop) textDialog(modal *dialog) fyne.CanvasObject {
 		}
 		return nil
 	}
-	d.entry = &desktopEntry{
-		Entry:      entry,
-		escape:     func() { d.closeModal() },
-		fullscreen: func() { d.window.SetFullScreen(!d.window.FullScreen()) },
-	}
+	d.entry.escape = func() { d.closeModal() }
+	d.entry.fullscreen = func() { d.toggleFullScreen() }
 	submitText := func() {
 		modal.input = entry.Text
 		if err := entry.Validate(); err != nil {
@@ -140,7 +151,7 @@ func (d *desktop) choiceList(choices []string, cursor int, choose func(int)) fyn
 
 func (d *desktop) listScroll(rows []fyne.CanvasObject) fyne.CanvasObject {
 	content := container.New(layout.NewCustomPaddedVBoxLayout(3), rows...)
-	d.modalScroll = container.NewVScroll(content)
+	d.modalScroll = container.NewVScroll(container.New(windowSideInsetLayout{inset: 12}, content))
 	visibleRows := len(rows)
 	if visibleRows > 7 {
 		visibleRows = 7
@@ -160,7 +171,7 @@ func (d *desktop) segmentDialog(modal *dialog) fyne.CanvasObject {
 func (d *desktop) multiPlayerDialog(modal *dialog) fyne.CanvasObject {
 	rows := make([]fyne.CanvasObject, 0, len(modal.players))
 	finishingLabels := map[string]string(nil)
-	if modal.purpose == selectBustee {
+	if modal.purpose == selectBustee && bustPlacesVisible(d.model) {
 		finishingLabels = busteeFinishingLabels(int(d.model.summary.ActivePlayers), modal.selectedOrder, modal.tiedIDs)
 	}
 	for index, player := range modal.players {
@@ -243,7 +254,11 @@ func playerDialogLabels(model *Model, modal *dialog) []string {
 		} else if player.Active {
 			state = " · active"
 		}
-		labels = append(labels, player.Name+state)
+		name := player.Name
+		if player.Alias != "" && (modal.purpose == selectInfo || modal.purpose == selectRename || modal.purpose == selectRemove || modal.purpose == selectAlias) {
+			name += " (" + player.Alias + ")"
+		}
+		labels = append(labels, name+state)
 	}
 	return labels
 }
@@ -300,7 +315,7 @@ func (d *desktop) browserView() fyne.CanvasObject {
 	unsupportedButton := d.newButton(unsupportedFilesButtonLabel(browser.showUnsupported), func() { d.toggleUnsupportedFiles() })
 	d.browserButtons = append(d.browserButtons, hiddenButton, unsupportedButton, up)
 	footerButtons := []fyne.CanvasObject{hiddenButton, unsupportedButton}
-	if browser.purpose == browseSaveDatabase || browser.purpose == browseSaveTemplate {
+	if browser.purpose == browseSaveDatabase || browser.purpose == browseSaveTemplate || browser.purpose == browseSavePlayers || browser.purpose == browseEditorSaveTemplate {
 		newFile := d.newButton("N · New file", func() { d.activate('n') })
 		d.browserButtons = append(d.browserButtons, newFile)
 		footerButtons = append(footerButtons, newFile)
@@ -379,22 +394,22 @@ type desktopEntry struct {
 	fullscreen func()
 }
 
-func (e *desktopEntry) AcceptsTab() bool { return true }
+func newDesktopEntry() *desktopEntry {
+	entry := &widget.Entry{Wrapping: fyne.TextWrap(fyne.TextTruncateClip)}
+	wrapped := &desktopEntry{Entry: entry}
+	entry.ExtendBaseWidget(wrapped)
+	return wrapped
+}
+
+func (e *desktopEntry) AcceptsTab() bool { return false }
 
 func (e *desktopEntry) TypedKey(event *fyne.KeyEvent) {
-	if event != nil && event.Name == fyne.KeyTab {
+	if event != nil && event.Name == fyne.KeyEscape && e.escape != nil {
+		e.escape()
 		return
 	}
-	if event != nil && event.Name == fyne.KeyEscape {
-		if e.escape != nil {
-			e.escape()
-		}
-		return
-	}
-	if event != nil && event.Name == fyne.KeyF11 {
-		if e.fullscreen != nil {
-			e.fullscreen()
-		}
+	if event != nil && event.Name == fyne.KeyF11 && e.fullscreen != nil {
+		e.fullscreen()
 		return
 	}
 	e.Entry.TypedKey(event)

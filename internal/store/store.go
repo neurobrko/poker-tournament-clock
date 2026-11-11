@@ -3,8 +3,10 @@ package store
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,13 +18,15 @@ import (
 
 	"git.mpx.sk/elvis/poker_clock/internal/config"
 	"github.com/gofrs/flock"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/unicode/norm"
 	_ "modernc.org/sqlite"
 )
 
 const (
 	// MaxNameLength caps display names accepted by the app.
-	MaxNameLength         = 80
-	currentSchemaVersion  = 4
+	MaxNameLength         = config.MaxPlayerNameLength
+	currentSchemaVersion  = 5
 	databaseApplicationID = 1346587723 // ASCII "PCLK".
 )
 
@@ -44,6 +48,7 @@ var migrationFiles = []string{
 	"migrations/002_domain_events.sql",
 	"migrations/003_bust_corrections.sql",
 	"migrations/004_results.sql",
+	"migrations/005_player_aliases.sql",
 }
 
 // Store keeps the application lock for the lifetime of its database connection.
@@ -354,10 +359,58 @@ func (s *Store) initializeTournament(ctx context.Context, name string, template 
 		VALUES ('tournament_created', ?, ?)`, wallString, string(payload)); err != nil {
 		return fmt.Errorf("record tournament creation: %w", err)
 	}
+	for _, player := range template.Players {
+		if err := insertSeedPlayer(ctx, tx, wallString, player); err != nil {
+			return err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit tournament initialization: %w", err)
 	}
 	return nil
+}
+
+func insertSeedPlayer(ctx context.Context, tx *sql.Tx, wallString string, player config.Player) error {
+	id, err := newPlayerID()
+	if err != nil {
+		return err
+	}
+	name := norm.NFC.String(strings.TrimSpace(player.Name))
+	alias := strings.TrimSpace(player.Alias)
+	key := norm.NFC.String(cases.Fold().String(name))
+	payload, err := json.Marshal(map[string]string{"player_id": id, "name": name, "alias": alias})
+	if err != nil {
+		return fmt.Errorf("encode seeded player event: %w", err)
+	}
+	result, err := tx.ExecContext(ctx, `INSERT INTO audit_events (kind, wall_timestamp, payload_json)
+		VALUES ('player_created', ?, ?)`, wallString, string(payload))
+	if err != nil {
+		return fmt.Errorf("record seeded player: %w", err)
+	}
+	eventID, err := result.LastInsertId()
+	if err != nil {
+		return fmt.Errorf("read seeded player event ID: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO players (id, name, name_key, alias, created_event_id)
+		VALUES (?, ?, ?, ?, ?)`, id, name, key, alias, eventID); err != nil {
+		return fmt.Errorf("insert seeded player: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO player_events (event_id, player_id, kind)
+		VALUES (?, ?, 'player_created')`, eventID, id); err != nil {
+		return fmt.Errorf("record seeded player history: %w", err)
+	}
+	return nil
+}
+
+func newPlayerID() (string, error) {
+	var bytes [16]byte
+	if _, err := rand.Read(bytes[:]); err != nil {
+		return "", fmt.Errorf("generate seeded player ID: %w", err)
+	}
+	bytes[6] = (bytes[6] & 0x0f) | 0x40
+	bytes[8] = (bytes[8] & 0x3f) | 0x80
+	encoded := hex.EncodeToString(bytes[:])
+	return encoded[:8] + "-" + encoded[8:12] + "-" + encoded[12:16] + "-" + encoded[16:20] + "-" + encoded[20:], nil
 }
 
 // Tournament reads current durable state and validates the persisted configuration.

@@ -27,6 +27,8 @@ const (
 	dialogSelectPurchase
 	dialogSelectBust
 	dialogSelectParticipant
+	dialogTemplateOptions
+	dialogEditorForm
 )
 
 type dialogPurpose int
@@ -35,6 +37,16 @@ const (
 	purposeNone dialogPurpose = iota
 	menuTemplate
 	menuPlayers
+	menuPlayerImportConflict
+	templateImportOptions
+	templateExportOptions
+	menuEditorSource
+	editorFormPurchases
+	editorFormLevel
+	editorFormBreak
+	editorFormChip
+	editorFormPlayer
+	editorFormPrize
 	menuSettings
 	menuSoundSettings
 	menuBusts
@@ -42,6 +54,7 @@ const (
 	selectInfo
 	selectRename
 	selectRemove
+	selectAlias
 	selectSitOut
 	selectBuster
 	selectBustee
@@ -59,6 +72,7 @@ const (
 	textBrowserFilename
 	textAddPlayer
 	textRenamePlayer
+	textPlayerAlias
 	textRemoveExplanation
 	textIncompleteEnd
 	textReopenExplanation
@@ -84,19 +98,24 @@ const (
 	confirmVoidBust
 	confirmCorrectBust
 	confirmSelectSegment
+	confirmDiscardEditor
+	confirmRemoveEditorItem
 )
 
 type dialog struct {
-	kind        dialogKind
-	purpose     dialogPurpose
-	textPurpose textPurpose
-	confirm     confirmPurpose
-	title       string
-	message     string
-	prompt      string
-	input       string
-	choices     []string
-	cursor      int
+	kind           dialogKind
+	purpose        dialogPurpose
+	textPurpose    textPurpose
+	confirm        confirmPurpose
+	title          string
+	message        string
+	prompt         string
+	input          string
+	choices        []string
+	cursor         int
+	includePlayers bool
+	formValues     map[string]string
+	editorIndex    int
 
 	players         []tournament.Player
 	selected        map[string]bool
@@ -136,6 +155,10 @@ func (m *Model) handleDialogKey(key keyEvent) bool {
 	switch d.kind {
 	case dialogText:
 		return m.handleTextDialog(key, d)
+	case dialogTemplateOptions:
+		return m.handleTemplateOptionsKey(key, d)
+	case dialogEditorForm:
+		return m.handleEditorFormKey(key, d)
 	case dialogMenu:
 		return m.handleMenuDialog(key, d)
 	case dialogConfirm:
@@ -230,6 +253,14 @@ func (m *Model) submitText(d *dialog) {
 		m.modal = nil
 		m.refresh()
 		m.setStatus("Player name updated; history preserved.", false)
+	case textPlayerAlias:
+		if err := m.service.SetPlayerAlias(context.Background(), d.targetPlayer, value, m.actionContext()); err != nil {
+			m.showMessage("Alias update failed", err.Error())
+			return
+		}
+		m.modal = nil
+		m.refresh()
+		m.setStatus("Player alias updated.", false)
 	case textTournamentNameRename:
 		m.renameTournament(value)
 	case textRemoveExplanation:
@@ -301,6 +332,8 @@ func (m *Model) chooseMenu(d *dialog) {
 		return
 	}
 	switch d.purpose {
+	case menuEditorSource:
+		m.chooseEditorSource(d.cursor)
 	case menuTemplate:
 		switch d.cursor {
 		case 0:
@@ -313,22 +346,31 @@ func (m *Model) chooseMenu(d *dialog) {
 			m.modal = nil
 		}
 	case menuPlayers:
-		if m.record.Status == store.StatusEnded {
-			m.openPlayerSelect(selectInfo, m.players)
-			return
-		}
-		switch d.cursor {
-		case 0:
+		choice := d.choices[d.cursor]
+		switch choice {
+		case "Add player":
 			m.modal = &dialog{kind: dialogText, title: "Add player", prompt: "Player name", textPurpose: textAddPlayer}
-		case 1:
+		case "Player info / history":
 			m.openPlayerSelect(selectInfo, m.players)
-		case 2:
+		case "Rename player":
 			m.openPlayerSelect(selectRename, nonRemoved(m.players))
-		case 3:
+		case "Remove player":
 			m.openPlayerSelect(selectRemove, nonRemoved(m.players))
-		case 4:
+		case "Void purchase":
 			m.openVoidPurchase()
+		case "Edit player alias":
+			m.openPlayerSelect(selectAlias, nonRemoved(m.players))
+		case "Import players from YAML":
+			if m.record.StartedAt != nil {
+				m.showMessage("Import unavailable", "Import players before starting the tournament.")
+				return
+			}
+			m.startBrowser(browsePlayers, screenMain)
+		case "Export players to YAML":
+			m.startBrowser(browseSavePlayers, screenMain)
 		}
+	case menuPlayerImportConflict:
+		m.choosePlayerImportConflict(d.cursor)
 	case menuSettings:
 		m.chooseSettings(d.cursor)
 	case menuSoundSettings:
@@ -338,12 +380,37 @@ func (m *Model) chooseMenu(d *dialog) {
 	}
 }
 
+func (m *Model) handleTemplateOptionsKey(key keyEvent, d *dialog) bool {
+	switch key.Type {
+	case keyEsc:
+		m.closeDialog()
+	case keySpace:
+		d.includePlayers = !d.includePlayers
+	case keyEnter:
+		m.chooseTemplateOptions(d)
+	}
+	return false
+}
+
+func (m *Model) chooseTemplateOptions(d *dialog) {
+	m.templatePlayersChecked = d.includePlayers
+	m.modal = nil
+	if d.purpose == templateImportOptions {
+		m.startBrowser(browseTemplate, screenMain)
+	} else {
+		m.startBrowser(browseSaveTemplate, screenMain)
+	}
+	if m.browser == nil {
+		m.templatePlayersChecked = false
+	}
+}
+
 func (m *Model) chooseSettings(index int) {
 	switch index {
 	case 0:
-		m.startBrowser(browseSaveTemplate, screenMain)
+		m.modal = &dialog{kind: dialogTemplateOptions, purpose: templateExportOptions, title: "Export template", message: "Import will change the current roster; export will include the current roster."}
 	case 1:
-		m.startBrowser(browseTemplate, screenMain)
+		m.modal = &dialog{kind: dialogTemplateOptions, purpose: templateImportOptions, title: "Import template", message: "Import will change the current roster; export will include the current roster."}
 	case 2:
 		m.modal = &dialog{kind: dialogText, title: "Rename tournament", prompt: "Tournament name", input: m.record.Name, textPurpose: textTournamentNameRename}
 	case 3:
@@ -481,6 +548,46 @@ func (m *Model) confirmAction(d *dialog) bool {
 	case confirmSelectSegment:
 		m.modal = nil
 		m.applySegmentSelection(d.segmentIndex, d.remaining)
+	case confirmDiscardEditor:
+		m.modal = nil
+		m.screen = screenStartup
+		m.editorDirty = false
+		m.setStatus(nil, false)
+	case confirmRemoveEditorItem:
+		var err error
+		switch d.purpose {
+		case editorFormLevel, editorFormBreak:
+			if d.editorIndex < 0 || d.editorIndex >= len(m.editorTemplate.Schedule) {
+				err = fmt.Errorf("schedule item no longer exists")
+			} else {
+				m.editorTemplate.Schedule = append(m.editorTemplate.Schedule[:d.editorIndex], m.editorTemplate.Schedule[d.editorIndex+1:]...)
+			}
+		case editorFormPlayer:
+			if d.editorIndex < 0 || d.editorIndex >= len(m.editorTemplate.Players) {
+				err = fmt.Errorf("player no longer exists")
+			} else {
+				m.editorTemplate.Players = append(m.editorTemplate.Players[:d.editorIndex], m.editorTemplate.Players[d.editorIndex+1:]...)
+			}
+		case editorFormChip:
+			if d.editorIndex < 0 || d.editorIndex >= len(m.editorTemplate.ChipValues) {
+				err = fmt.Errorf("chip value no longer exists")
+			} else {
+				m.editorTemplate.ChipValues = append(m.editorTemplate.ChipValues[:d.editorIndex], m.editorTemplate.ChipValues[d.editorIndex+1:]...)
+			}
+		case editorFormPrize:
+			if d.editorIndex < 0 || d.editorIndex >= len(m.editorTemplate.PrizeTiers) {
+				err = fmt.Errorf("prize tier no longer exists")
+			} else {
+				m.editorTemplate.PrizeTiers = append(m.editorTemplate.PrizeTiers[:d.editorIndex], m.editorTemplate.PrizeTiers[d.editorIndex+1:]...)
+			}
+		}
+		if err != nil {
+			m.setStatus(err, true)
+			return false
+		}
+		m.modal = nil
+		m.editorDirty = true
+		m.setStatus("Tournament draft updated.", false)
 	}
 	if m.suspendedModal != nil && m.modal == nil {
 		m.modal, m.suspendedModal = m.suspendedModal, nil
@@ -534,6 +641,8 @@ func (m *Model) choosePlayer(d *dialog, player tournament.Player) {
 		m.setStatus(fmt.Sprintf("%s recorded for %s.", d.purchaseKind, player.Name), false)
 	case selectRename:
 		m.modal = &dialog{kind: dialogText, title: "Rename player", prompt: "Player name", input: player.Name, textPurpose: textRenamePlayer, targetPlayer: player.ID}
+	case selectAlias:
+		m.modal = &dialog{kind: dialogText, title: "Edit player alias", prompt: "Alias (leave blank to clear)", input: player.Alias, textPurpose: textPlayerAlias, targetPlayer: player.ID}
 	case selectRemove:
 		m.modal = &dialog{kind: dialogText, title: "Remove player", prompt: "Explanation (required, max 200 chars)", textPurpose: textRemoveExplanation, targetPlayer: player.ID}
 	case selectSitOut:
@@ -701,6 +810,10 @@ func busteeGroups(order []string, tied map[string]bool) [][]string {
 		index = end
 	}
 	return groups
+}
+
+func bustPlacesVisible(model *Model) bool {
+	return !model.record.Config.Registration.RebuysEnabled || model.record.RegistrationClosed || model.record.Status == store.StatusEnded
 }
 
 func busteeFinishingLabels(activeBefore int, order []string, tied map[string]bool) map[string]string {
@@ -1063,6 +1176,10 @@ func (m *Model) playerByID(id string) (tournament.Player, bool) {
 }
 
 func (m *Model) closeDialog() {
+	if m.modal != nil && m.modal.purpose == menuPlayerImportConflict {
+		m.cancelPlayerImport()
+		return
+	}
 	if m.modal != nil && m.modal.returnTo != nil {
 		m.modal = m.modal.returnTo
 		return
@@ -1137,6 +1254,8 @@ func removeString(values []string, target string) []string {
 }
 
 func (m *Model) saveTemplateImport(path string) {
+	includePlayers := m.templatePlayersChecked
+	m.templatePlayersChecked = false
 	data, err := os.ReadFile(path)
 	if err != nil {
 		m.showMessage("Template read failed", err.Error())
@@ -1147,6 +1266,11 @@ func (m *Model) saveTemplateImport(path string) {
 		m.showMessage("Invalid template", err.Error())
 		return
 	}
+	if includePlayers {
+		m.beginPlayerImport(template.Players, &template)
+		return
+	}
+	template.Players = nil
 	action := m.actionContext()
 	if err := m.service.UpdateConfiguration(context.Background(), template, action); err != nil {
 		m.showMessage("Settings import failed", err.Error())

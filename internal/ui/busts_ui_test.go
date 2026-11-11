@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"testing"
 
+	"git.mpx.sk/elvis/poker_clock/internal/store"
 	"git.mpx.sk/elvis/poker_clock/internal/tournament"
 )
 
@@ -23,6 +24,24 @@ func TestBuildBusteesPreservesOrderAndPartialTieGroups(t *testing.T) {
 		if got[index] != want[index] {
 			t.Fatalf("bustee %d = %+v, want %+v", index, got[index], want[index])
 		}
+	}
+}
+
+func TestBustPlacesAreHiddenWhileRebuysRemainOpen(t *testing.T) {
+	model := NewModel()
+	model.record.Status = store.StatusRunning
+	model.record.Config.Registration.RebuysEnabled = true
+	if bustPlacesVisible(model) {
+		t.Fatal("bust places should be hidden while rebuys remain open")
+	}
+	model.record.RegistrationClosed = true
+	if !bustPlacesVisible(model) {
+		t.Fatal("bust places should be shown after registration closes")
+	}
+	model.record.RegistrationClosed = false
+	model.record.Config.Registration.RebuysEnabled = false
+	if !bustPlacesVisible(model) {
+		t.Fatal("bust places should be shown when rebuys are disabled")
 	}
 }
 
