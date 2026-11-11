@@ -1,6 +1,6 @@
 # Releasing
 
-GitHub Actions checks pushes and pull requests, including native Linux and supported-platform build checks for pull requests. Pushing a `v*` tag builds six standalone binaries, embeds that tag as the version shown in the clock footer, and publishes a GitHub Release. The workflow is [`ci-release.yml`](../.github/workflows/ci-release.yml).
+GitHub Actions runs formatting, tests, vet, native Linux checks, and supported-platform build checks for pull requests. Pushing a `v*` tag builds six standalone binaries, embeds that tag as the version shown in the clock footer, and publishes a GitHub Release. Gitea Actions runs only a lightweight notice job; CI and release builds run on GitHub. The workflow is [`ci-release.yml`](../.github/workflows/ci-release.yml).
 
 ## Before the first public release
 
@@ -35,4 +35,4 @@ GitHub Actions checks pushes and pull requests, including native Linux and suppo
 
 5. Watch the **CI and release** workflow complete. Confirm all six binaries appear on the GitHub Release page and download/run the builds for platforms available to test.
 
-A tag push starts the checks before builds; a failed check prevents release publication. The generated assets are named `poker-clock-<os>-<arch>` (`.exe` on Windows). Do not move or reuse a published version tag; publish a new patch version to replace a bad release.
+A GitHub tag push starts the checks before builds; a failed check prevents release publication. The generated assets are named `poker-clock-<os>-<arch>` (`.exe` on Windows). Do not move or reuse a published version tag; publish a new patch version to replace a bad release.
