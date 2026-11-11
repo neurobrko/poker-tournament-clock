@@ -126,64 +126,40 @@ func (m *Model) cancelPlayerImport() {
 }
 
 func (m *Model) applyPlayerImport() {
-	importingTemplate := m.pendingTemplateImport != nil
-	if importingTemplate {
-		if err := m.service.UpdateConfiguration(context.Background(), *m.pendingTemplateImport, m.actionContext()); err != nil {
-			m.pendingPlayerImports = nil
-			m.pendingTemplateImport = nil
-			m.refresh()
-			m.showMessage("Settings import failed", err.Error())
-			return
-		}
-		m.pendingTemplateImport = nil
-	}
-	added, restored, updated, skipped, processed := 0, 0, 0, 0, 0
+	changes := make([]tournament.PlayerImportChange, 0, len(m.pendingPlayerImports))
+	added, restored, updated, skipped := 0, 0, 0, 0
 	for _, operation := range m.pendingPlayerImports {
 		switch operation.action {
 		case playerImportAdd:
-			player, err := m.service.RegisterPlayer(context.Background(), operation.player.Name, false, tournament.ActionContext{})
-			if err == nil && operation.player.Alias != "" {
-				err = m.service.SetPlayerAlias(context.Background(), player.ID, operation.player.Alias, tournament.ActionContext{})
-			}
-			if err != nil {
-				m.failPlayerImport(processed, err)
-				return
-			}
+			changes = append(changes, tournament.PlayerImportChange{Action: tournament.PlayerImportAdd, Name: operation.player.Name, Alias: operation.player.Alias})
 			added++
 		case playerImportKeep, playerImportSkip:
 			skipped++
 		case playerImportUpdateAlias:
-			if err := m.service.SetPlayerAlias(context.Background(), operation.id, operation.player.Alias, tournament.ActionContext{}); err != nil {
-				m.failPlayerImport(processed, err)
-				return
-			}
+			changes = append(changes, tournament.PlayerImportChange{Action: tournament.PlayerImportUpdateAlias, PlayerID: operation.id, Name: operation.player.Name, Alias: operation.player.Alias})
 			updated++
 		case playerImportRestore:
-			player, err := m.service.RegisterPlayer(context.Background(), operation.player.Name, true, tournament.ActionContext{})
-			if err == nil {
-				err = m.service.SetPlayerAlias(context.Background(), player.ID, operation.player.Alias, tournament.ActionContext{})
-			}
-			if err != nil {
-				m.failPlayerImport(processed, err)
-				return
-			}
+			changes = append(changes, tournament.PlayerImportChange{Action: tournament.PlayerImportRestore, PlayerID: operation.id, Name: operation.player.Name, Alias: operation.player.Alias})
 			restored++
 		}
-		processed++
+	}
+
+	template := m.pendingTemplateImport
+	if err := m.service.ApplyPlayerImport(context.Background(), template, changes, m.actionContext()); err != nil {
+		m.pendingPlayerImports = nil
+		m.pendingTemplateImport = nil
+		m.refresh()
+		m.showMessage("Player import failed", fmt.Sprintf("No changes were applied: %v", err))
+		return
 	}
 	m.pendingPlayerImports = nil
+	m.pendingTemplateImport = nil
 	m.refresh()
-	if importingTemplate {
+	if template != nil {
 		m.setStatus(fmt.Sprintf("Tournament settings imported; roster merged: %d added, %d aliases updated, %d restored, %d kept/skipped.", added, updated, restored, skipped), false)
 	} else {
 		m.setStatus(fmt.Sprintf("Player import complete: %d added, %d aliases updated, %d restored, %d kept/skipped.", added, updated, restored, skipped), false)
 	}
-}
-
-func (m *Model) failPlayerImport(processed int, err error) {
-	m.pendingPlayerImports = nil
-	m.refresh()
-	m.showMessage("Player import failed", fmt.Sprintf("Stopped after processing %d entries: %v", processed, err))
 }
 
 func (m *Model) currentRosterPlayers() []config.Player {

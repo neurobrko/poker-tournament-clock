@@ -73,6 +73,7 @@ type desktop struct {
 	dualHome       *desktopHome
 	dualKeys       *desktopKeySink
 	dualTitle      string
+	dualConfigKey  string
 	dualFullscreen *widget.Button
 	dualClose      *widget.Button
 	dualVisible    bool
@@ -103,13 +104,13 @@ func (d *desktop) clockLoop(stop <-chan struct{}) {
 				}
 				modalBeforeTick := d.model.modal
 				d.model.onClockTick()
+				d.refreshDualClock()
 				if d.model.modal != modalBeforeTick {
 					d.render(true)
 					return
 				}
 				if d.model.screen == screenMain && d.home != nil {
 					d.home.refreshClock(d.model)
-					d.refreshDualClock()
 					if d.model.modal != nil {
 						d.disableBackgroundControls()
 					}
@@ -143,6 +144,7 @@ func (d *desktop) render(_ bool) {
 	switch {
 	case m.modal != nil:
 		base := d.baseView()
+		d.entry = nil
 		d.disableBackgroundControls()
 		content = d.modalOverlay(base, m.modal)
 	case m.browser != nil:
@@ -390,7 +392,8 @@ func (d *desktop) toggleDualDisplay() {
 		d.dualWindow.Resize(fyne.NewSize(1280, 900))
 		content, home := d.dualView()
 		d.dualHome = home
-		d.dualKeys = newDesktopKeySink(d)
+		d.dualConfigKey = fmt.Sprintf("%#v", d.model.record.Config)
+		d.dualKeys = newDualDisplayKeySink(d)
 		d.dualWindow.SetContent(container.NewBorder(d.dualKeys, nil, nil, nil, content))
 		d.dualWindow.SetCloseIntercept(func() { d.hideDualDisplay() })
 		d.dualWindow.Canvas().SetOnTypedKey(func(event *fyne.KeyEvent) {
@@ -445,6 +448,16 @@ func (d *desktop) debugf(format string, args ...any) {
 
 func (d *desktop) refreshDualDisplay() {
 	if d.dualVisible && d.dualHome != nil {
+		configKey := fmt.Sprintf("%#v", d.model.record.Config)
+		if configKey != d.dualConfigKey {
+			wasFocused := d.dualWindow.Canvas().Focused() == d.dualKeys
+			content, home := d.dualView()
+			d.dualHome, d.dualConfigKey = home, configKey
+			d.dualWindow.SetContent(container.NewBorder(d.dualKeys, nil, nil, nil, content))
+			if wasFocused {
+				d.dualWindow.Canvas().Focus(d.dualKeys)
+			}
+		}
 		title := "Poker Clock — " + d.model.record.Name
 		if title != d.dualTitle {
 			d.dualWindow.SetTitle(title)
@@ -470,7 +483,7 @@ func (d *desktop) newButton(label string, tapped func()) *widget.Button {
 }
 
 func (d *desktop) dispatchRune(value rune) {
-	if value == 0 || d.model.screen == screenEditor && d.model.browser == nil {
+	if value == 0 || d.model.screen == screenEditor && d.model.browser == nil && (d.model.modal == nil || d.model.modal.kind == dialogEditorForm || d.model.modal.kind == dialogText) {
 		return
 	}
 	d.dispatchKey(keyEvent{Type: keyRunes, Runes: []rune{value}})
@@ -532,6 +545,22 @@ type desktopKeySink struct {
 
 func newDesktopKeySink(owner *desktop) *desktopKeySink {
 	keys := &desktopKeySink{owner: owner, dispatch: owner.dispatchRune, key: owner.dispatchKeyEvent}
+	keys.ExtendBaseWidget(keys)
+	return keys
+}
+
+func newDualDisplayKeySink(owner *desktop) *desktopKeySink {
+	keys := &desktopKeySink{owner: owner}
+	keys.dispatch = func(value rune) {
+		if strings.EqualFold(string(value), "c") {
+			owner.hideDualDisplay()
+		}
+	}
+	keys.key = func(event *fyne.KeyEvent) {
+		if event != nil && event.Name == fyne.KeyF11 {
+			owner.toggleFullScreen()
+		}
+	}
 	keys.ExtendBaseWidget(keys)
 	return keys
 }

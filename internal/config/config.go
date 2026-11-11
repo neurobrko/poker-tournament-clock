@@ -316,16 +316,17 @@ func validatePlayers(players []Player) error {
 	seen := make(map[string]bool, len(players))
 	for index, player := range players {
 		name := norm.NFC.String(strings.TrimSpace(player.Name))
-		if name == "" || len([]rune(name)) > MaxPlayerNameLength {
-			return fmt.Errorf("players item %d name must contain 1 to %d characters", index+1, MaxPlayerNameLength)
+		if name == "" || strings.ContainsRune(name, '\x00') || len([]rune(name)) > MaxPlayerNameLength {
+			return fmt.Errorf("players item %d name must contain 1 to %d characters and no NUL", index+1, MaxPlayerNameLength)
 		}
 		key := norm.NFC.String(cases.Fold().String(name))
 		if seen[key] {
 			return fmt.Errorf("players item %d duplicates name %q", index+1, player.Name)
 		}
 		seen[key] = true
-		if len([]rune(strings.TrimSpace(player.Alias))) > MaxPlayerNameLength {
-			return fmt.Errorf("players item %d alias cannot exceed %d characters", index+1, MaxPlayerNameLength)
+		alias := strings.TrimSpace(player.Alias)
+		if strings.ContainsRune(alias, '\x00') || len([]rune(alias)) > MaxPlayerNameLength {
+			return fmt.Errorf("players item %d alias cannot exceed %d characters or contain NUL", index+1, MaxPlayerNameLength)
 		}
 	}
 	return nil

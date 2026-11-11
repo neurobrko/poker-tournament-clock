@@ -406,8 +406,8 @@ func parseEditorPercentages(value string) ([]config.Percentage, error) {
 		if part == "" || yaml.Unmarshal([]byte(part), &percentage) != nil {
 			return nil, fmt.Errorf("enter valid comma-separated percentages totaling 100")
 		}
-		value, _ := new(big.Rat).SetString(string(percentage))
-		if value.Sign() <= 0 || previous != nil && value.Cmp(previous) > 0 {
+		value, ok := new(big.Rat).SetString(string(percentage))
+		if !ok || value.Sign() <= 0 || previous != nil && value.Cmp(previous) > 0 {
 			return nil, fmt.Errorf("prize percentages must be positive and non-increasing by place")
 		}
 		total.Add(total, value)

@@ -54,6 +54,9 @@ func NewService(database *store.Store) *Service { return &Service{store: databas
 // NormalizePlayerName trims whitespace, applies Unicode NFC, then Unicode case folding.
 func NormalizePlayerName(name string) (display, key string, err error) {
 	display = norm.NFC.String(strings.TrimSpace(name))
+	if strings.ContainsRune(display, '\x00') {
+		return "", "", fmt.Errorf("player name cannot contain NUL")
+	}
 	if display == "" {
 		return "", "", fmt.Errorf("player name is required")
 	}
@@ -238,8 +241,8 @@ func (s *Service) RegisterPlayer(ctx context.Context, name string, restoreRemove
 // SetPlayerAlias updates the optional alias without changing the player's identity.
 func (s *Service) SetPlayerAlias(ctx context.Context, playerID, alias string, action ActionContext) error {
 	alias = strings.TrimSpace(alias)
-	if len([]rune(alias)) > store.MaxNameLength {
-		return fmt.Errorf("player alias cannot exceed %d characters", store.MaxNameLength)
+	if strings.ContainsRune(alias, '\x00') || len([]rune(alias)) > store.MaxNameLength {
+		return fmt.Errorf("player alias cannot exceed %d characters or contain NUL", store.MaxNameLength)
 	}
 	event, checkpoint := action.event("player_alias_changed", map[string]string{"player_id": playerID, "alias": alias}, "")
 	_, err := s.store.CommitEvent(ctx, event, checkpoint, func(tx *sql.Tx, eventID int64) error {
@@ -410,7 +413,7 @@ func playerDependencies(ctx context.Context, tx *sql.Tx, playerID string) ([]str
 		},
 		{
 			query: `SELECT pe.kind || ' event #' || pe.event_id FROM player_events pe
-				WHERE pe.player_id = ? AND pe.kind NOT IN ('player_created', 'player_restored', 'player_removed')
+				WHERE pe.player_id = ? AND pe.kind NOT IN ('player_created', 'player_restored', 'player_removed', 'player_alias_changed')
 				AND NOT EXISTS (SELECT 1 FROM audit_events v WHERE v.voids_event_id = pe.event_id)`,
 			args: []any{playerID},
 		},

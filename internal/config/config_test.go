@@ -105,7 +105,9 @@ func TestTemplatePlayersSupportAliasesAndValidateNames(t *testing.T) {
 	for _, players := range [][]Player{
 		{{Name: "Alice"}, {Name: " alice "}},
 		{{Name: "   "}},
+		{{Name: "\x00"}},
 		{{Name: "A", Alias: strings.Repeat("x", MaxPlayerNameLength+1)}},
+		{{Name: "A", Alias: "\x00"}},
 	} {
 		template.Players = players
 		if err := template.Validate(); err == nil {

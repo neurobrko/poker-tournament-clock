@@ -73,6 +73,9 @@ func TestPlayerAliasCanBeUpdatedAndCleared(t *testing.T) {
 	if err := service.SetPlayerAlias(ctx, player.ID, strings.Repeat("x", store.MaxNameLength+1), ActionContext{}); err == nil {
 		t.Fatal("overlong alias was accepted")
 	}
+	if err := service.SetPlayerAlias(ctx, player.ID, "\x00", ActionContext{}); err == nil {
+		t.Fatal("NUL alias was accepted")
+	}
 }
 
 func TestRemovedPlayerRequiresExplicitRestoreAndKeepsIdentity(t *testing.T) {
