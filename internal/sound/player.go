@@ -103,11 +103,10 @@ func playerCommand(path string) (string, []string, error) {
 				args []string
 			}{"powershell.exe", []string{"-NoProfile", "-NonInteractive", "-Command", "(New-Object System.Media.SoundPlayer -ArgumentList '" + quoted + "').PlaySync()"}})
 		} else {
-			player := "$p = New-Object -ComObject WMPlayer.OCX; $p.URL = '" + quoted + "'; $p.controls.play(); $sw = [Diagnostics.Stopwatch]::StartNew(); while ($p.playState -ne 3 -and $sw.Elapsed.TotalSeconds -lt 5) { Start-Sleep -Milliseconds 100 }; if ($p.playState -ne 3) { $p.close(); exit 1 }; $sw.Restart(); while ($p.playState -eq 3 -and $sw.Elapsed.TotalMinutes -lt 2) { Start-Sleep -Milliseconds 100 }; if ($p.playState -eq 3) { $p.close(); exit 1 }; $p.close()"
 			candidates = append(candidates, struct {
 				name string
 				args []string
-			}{"powershell.exe", []string{"-NoProfile", "-NonInteractive", "-Command", player}})
+			}{"powershell.exe", []string{"-NoProfile", "-NonInteractive", "-Command", windowsMP3PlaybackScript(path)}})
 		}
 	default:
 		if extension == ".mp3" {
@@ -148,4 +147,9 @@ func playerCommand(path string) (string, []string, error) {
 		}
 	}
 	return "", nil, fmt.Errorf("no supported sound player is available")
+}
+
+func windowsMP3PlaybackScript(path string) string {
+	quoted := strings.ReplaceAll(path, "'", "''")
+	return "$p = New-Object -ComObject WMPlayer.OCX; $p.URL = '" + quoted + "'; $p.controls.play(); $sw = [Diagnostics.Stopwatch]::StartNew(); while ($p.playState -ne 3 -and $p.playState -ne 8 -and $sw.Elapsed.TotalSeconds -lt 5) { Start-Sleep -Milliseconds 100 }; if ($p.playState -ne 3 -and $p.playState -ne 8) { $p.close(); exit 1 }; $sw.Restart(); while ($p.playState -ne 1 -and $p.playState -ne 8 -and $sw.Elapsed.TotalMinutes -lt 2) { Start-Sleep -Milliseconds 100 }; if ($p.playState -ne 1 -and $p.playState -ne 8) { $p.close(); exit 1 }; $p.close()"
 }
