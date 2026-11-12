@@ -50,6 +50,7 @@ func RunDesktop(application fyne.App) error {
 	window.SetCloseIntercept(controller.requestQuit)
 	window.SetFullScreen(true)
 	window.Show()
+	controller.debugf("startup display: scale=%.2f size=%v", window.Canvas().Scale(), window.Canvas().Size())
 
 	stop := make(chan struct{})
 	defer close(stop)
@@ -310,7 +311,7 @@ func (d *desktop) dispatchKeyEvent(event *fyne.KeyEvent) {
 		return
 	}
 	if event.Name == fyne.KeyF11 {
-		d.debugf("F11 event: screen=%d focused=%T fullscreen=%t dual=%t", d.model.screen, d.window.Canvas().Focused(), d.window.FullScreen(), d.dualVisible)
+		d.debugf("F11 event: screen=%d focused=%T fullscreen=%t dual=%t scale=%.2f", d.model.screen, d.window.Canvas().Focused(), d.window.FullScreen(), d.dualVisible, d.window.Canvas().Scale())
 	}
 	if d.model.screen == screenEditor && d.model.browser == nil && (d.model.modal == nil || d.model.modal.kind == dialogEditorForm) {
 		switch event.Name {

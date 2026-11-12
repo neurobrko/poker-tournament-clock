@@ -32,6 +32,18 @@ The app opens fullscreen by default. Resize the window freely or use **F11** (al
 
 A normal Linux desktop build links Fyne's OpenGL/X11 driver. Headless CI/tests use Fyne's software driver with `-tags ci`.
 
+## Screenshots
+
+**Main tournament window**
+
+<img src="docs/images/main-dashboard.png" alt="Poker Clock main tournament dashboard" width="100%">
+
+**Read-only dual-screen window**
+
+<img src="docs/images/dual-screen-dashboard.png" alt="Poker Clock read-only dual-screen dashboard" width="100%">
+
+On Linux, fractional desktop scaling may not be detected consistently by the desktop driver. As a workaround, adjust Fyne's scale multiplier when launching, for example `FYNE_SCALE=1.25 ./poker-clock-linux-amd64`; the right value depends on the monitor and detected scale.
+
 ## Tournament template
 
 The embedded default includes 12 blind levels, three breaks, €2 buy-ins/rebuys/add-ons, 1,000/1,000/5,000 chips, no ante, and a default 60/25/15 payout tier. Durations use values such as `20m`, `10m`, and `90s`; prices are euro amounts represented exactly, such as `2`, `2.0`, or `2.00`.
