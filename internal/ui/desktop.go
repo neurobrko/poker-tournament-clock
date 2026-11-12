@@ -50,7 +50,9 @@ func RunDesktop(application fyne.App) error {
 	window.SetCloseIntercept(controller.requestQuit)
 	window.SetFullScreen(true)
 	window.Show()
-	controller.debugf("startup display: scale=%.2f size=%v", window.Canvas().Scale(), window.Canvas().Size())
+	fyne.Do(func() {
+		controller.debugf("startup display: fullscreen=%t scale=%.2f size=%v FYNE_SCALE=%q", window.FullScreen(), window.Canvas().Scale(), window.Canvas().Size(), os.Getenv("FYNE_SCALE"))
+	})
 
 	stop := make(chan struct{})
 	defer close(stop)

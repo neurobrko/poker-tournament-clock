@@ -42,7 +42,9 @@ A normal Linux desktop build links Fyne's OpenGL/X11 driver. Headless CI/tests u
 
 <img src="docs/images/dual-screen-dashboard.png" alt="Poker Clock read-only dual-screen dashboard" width="100%">
 
-On Linux, fractional desktop scaling may not be detected consistently by the desktop driver. As a workaround, adjust Fyne's scale multiplier when launching, for example `FYNE_SCALE=1.25 ./poker-clock-linux-amd64`; the right value depends on the monitor and detected scale.
+## Display scaling
+
+**Known issue:** fractional display scaling can make the UI incorrectly sized across monitors on Linux GNOME, reported with both X11 and Wayland. Setting every display to 100% restores expected sizing. See [Known issues](docs/known-issues.md) for details, workarounds, and diagnostics. `FYNE_SCALE=1.25 ./poker-clock-linux-amd64` is an unverified alternative; the right multiplier depends on the setup.
 
 ## Tournament template
 
@@ -70,7 +72,7 @@ Template schema and rules are documented in [`docs/configuration.md`](docs/confi
 | `Q` | Confirm exit; running clock pauses and saves before exit |
 | `T` (welcome) | Open tournament editor |
 
-Controls work with mouse and keyboard. Welcome screen: `N` new, `L` load, `T` editor, `Q` quit; Up/Down arrows and Tab move selection, Enter activates. The editor provides structured forms for the schedule, purchases, registration, chips, players, and prize tiers. File browser hides dotfiles and unsupported items by default; `H` toggles hidden files, `U` toggles unselectable files, `Home`/`End` jump to list bounds, `Bck` moves to parent, `N` creates new file, and `Esc` cancels. Player info shows purchase and bust history; running clocks stay visible and update beneath dialogs. Text-entry dialogs treat Space as input, not as the global pause shortcut. Use F11 or window controls to leave fullscreen and resize. Set `POKER_CLOCK_DEBUG=1` when launching from a terminal to log F11 routing and fullscreen requests to stderr.
+Controls work with mouse and keyboard. Welcome screen: `N` new, `L` load, `T` editor, `Q` quit; Up/Down arrows and Tab move selection, Enter activates. The editor provides structured forms for the schedule, purchases, registration, chips, players, and prize tiers. File browser hides dotfiles and unsupported items by default; `H` toggles hidden files, `U` toggles unselectable files, `Home`/`End` jump to list bounds, `Bck` moves to parent, `N` creates new file, and `Esc` cancels. Player info shows purchase and bust history; running clocks stay visible and update beneath dialogs. Text-entry dialogs treat Space as input, not as the global pause shortcut. Use F11 or window controls to leave fullscreen and resize. Set `POKER_CLOCK_DEBUG=1` when launching from a terminal to log startup display scale/size, F11 routing, and fullscreen requests to stderr; see [Known issues](docs/known-issues.md) for the scaling diagnostics.
 
 ## Persistence and reporting
 
