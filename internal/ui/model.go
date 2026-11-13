@@ -28,12 +28,14 @@ const (
 	screenMain
 	screenRules
 	screenEditor
+	screenResolver
 )
 
 type Model struct {
 	screen screen
 
 	startupCursor int
+	resolver      *handResolver
 
 	editorTemplate  config.Template
 	editorName      string
@@ -380,6 +382,9 @@ func (m *Model) onKey(key keyEvent) bool {
 	if m.screen == screenRules {
 		return m.handleRulesKey(key)
 	}
+	if m.screen == screenResolver {
+		return m.handleHandResolverKey(key)
+	}
 	if m.screen == screenStartup {
 		return m.handleStartupKey(key)
 	}
@@ -392,9 +397,9 @@ func (m *Model) onKey(key keyEvent) bool {
 func (m *Model) handleStartupKey(key keyEvent) bool {
 	switch key.Type {
 	case keyUp:
-		m.startupCursor = (m.startupCursor + 3) % 4
+		m.startupCursor = (m.startupCursor + 4) % 5
 	case keyDown:
-		m.startupCursor = (m.startupCursor + 1) % 4
+		m.startupCursor = (m.startupCursor + 1) % 5
 	case keyEnter:
 		switch m.startupCursor {
 		case 0:
@@ -404,6 +409,8 @@ func (m *Model) handleStartupKey(key keyEvent) bool {
 		case 2:
 			m.openEditorSources()
 		case 3:
+			m.openHandResolver(screenStartup)
+		case 4:
 			m.askQuit()
 		}
 	case keyEsc:
@@ -419,8 +426,11 @@ func (m *Model) handleStartupKey(key keyEvent) bool {
 		case "t":
 			m.startupCursor = 2
 			m.openEditorSources()
-		case "q":
+		case "h":
 			m.startupCursor = 3
+			m.openHandResolver(screenStartup)
+		case "q":
+			m.startupCursor = 4
 			m.askQuit()
 		}
 	}
@@ -467,6 +477,8 @@ func (m *Model) handleMainKey(key keyEvent) bool {
 		m.openSettings()
 	case "e", "E":
 		m.beginEnd()
+	case "h", "H":
+		m.openHandResolver(screenMain)
 	case "?":
 		m.screen = screenRules
 	case "n", "N":

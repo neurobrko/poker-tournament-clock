@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -63,6 +65,8 @@ const (
 	selectCorrectBust
 	selectReplacement
 	selectRemainder
+	selectResolverRemovePlayer
+	menuResolverEditPlayer
 )
 
 type textPurpose int
@@ -81,6 +85,7 @@ const (
 	textVoidBustExplanation
 	textCorrectBustExplanation
 	textTournamentNameRename
+	textResolverPlayerName
 )
 
 type confirmPurpose int
@@ -129,6 +134,7 @@ type dialog struct {
 	participant     bustParticipantOption
 	replacement     *tournament.BustParticipant
 	segmentIndex    int
+	resolverPlayer  int
 	remaining       *time.Duration
 	purchases       []tournament.Purchase
 	bustEvents      []int64
@@ -263,6 +269,18 @@ func (m *Model) submitText(d *dialog) {
 		m.setStatus("Player alias updated.", false)
 	case textTournamentNameRename:
 		m.renameTournament(value)
+	case textResolverPlayerName:
+		if len([]rune(value)) > 32 {
+			m.setStatus("Player name must be 32 characters or fewer.", true)
+			return
+		}
+		if m.resolver != nil && d.resolverPlayer >= 0 && d.resolverPlayer < len(m.resolver.players) {
+			if value == "" {
+				value = fmt.Sprintf("Player %d", d.resolverPlayer+1)
+			}
+			m.resolver.players[d.resolverPlayer].name = value
+			m.modal = nil
+		}
 	case textRemoveExplanation:
 		if value == "" || len([]rune(value)) > 200 {
 			m.setStatus("Explanation must contain 1 to 200 characters.", true)
@@ -377,6 +395,8 @@ func (m *Model) chooseMenu(d *dialog) {
 		m.chooseSoundSettings(d.cursor)
 	case menuBusts:
 		m.chooseBusts(d.cursor)
+	case menuResolverEditPlayer:
+		m.editResolverPlayerName(d.cursor)
 	}
 }
 
@@ -692,6 +712,10 @@ func (m *Model) handleMultiPlayerDialog(key keyEvent, d *dialog) bool {
 				delete(d.selected, id)
 				d.selectedOrder = removeString(d.selectedOrder, id)
 			} else {
+				if d.purpose == selectResolverRemovePlayer && len(d.selectedOrder) >= len(d.players)-2 {
+					m.setStatus("At least two players must remain.", true)
+					return false
+				}
 				d.selected[id] = true
 				d.selectedOrder = append(d.selectedOrder, id)
 			}
@@ -722,6 +746,20 @@ func (m *Model) handleMultiPlayerDialog(key keyEvent, d *dialog) bool {
 func (m *Model) advanceBustSelection(d *dialog) {
 	if len(d.selectedOrder) == 0 {
 		m.setStatus("Select at least one player.", true)
+		return
+	}
+	if d.purpose == selectResolverRemovePlayer {
+		var indexes []int
+		for _, id := range d.selectedOrder {
+			if index, err := strconv.Atoi(id); err == nil {
+				indexes = append(indexes, index)
+			}
+		}
+		sort.Sort(sort.Reverse(sort.IntSlice(indexes)))
+		m.modal = nil
+		for _, index := range indexes {
+			m.removeResolverPlayer(index)
+		}
 		return
 	}
 	if d.purpose == selectBuster {

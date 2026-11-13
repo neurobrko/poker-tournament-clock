@@ -64,6 +64,9 @@ var ubuntuMono []byte
 //go:embed fonts/UbuntuSansMono-Bold.ttf
 var ubuntuMonoBold []byte
 
+//go:embed fonts/DejaVuSans.ttf
+var playingCardSymbols []byte
+
 type spacedustTheme struct {
 	base               fyne.Theme
 	regular            fyne.Resource
@@ -74,6 +77,7 @@ type spacedustTheme struct {
 	condensedBold      fyne.Resource
 	monospace          fyne.Resource
 	monospaceBold      fyne.Resource
+	symbols            fyne.Resource
 	useCondensedFamily bool
 }
 
@@ -91,6 +95,7 @@ func newUbuntuTheme(condensed bool) fyne.Theme {
 		condensedBold:      fyne.NewStaticResource("UbuntuSans-Condensed-Bold.ttf", ubuntuCondensedBold),
 		monospace:          fyne.NewStaticResource("UbuntuSansMono-Regular.ttf", ubuntuMono),
 		monospaceBold:      fyne.NewStaticResource("UbuntuSansMono-Bold.ttf", ubuntuMonoBold),
+		symbols:            fyne.NewStaticResource("DejaVuSans.ttf", playingCardSymbols),
 		useCondensedFamily: condensed,
 	}
 }
@@ -131,7 +136,7 @@ func (t *spacedustTheme) Color(name fyne.ThemeColorName, variant fyne.ThemeVaria
 
 func (t *spacedustTheme) Font(style fyne.TextStyle) fyne.Resource {
 	if style.Symbol {
-		return t.base.Font(style)
+		return t.symbols
 	}
 	if style.Monospace {
 		if style.Bold {

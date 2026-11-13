@@ -14,6 +14,7 @@ const (
 	keyEnd
 	keyLeft
 	keyRight
+	keyTab
 )
 
 type keyEvent struct {

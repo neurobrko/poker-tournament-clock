@@ -18,6 +18,8 @@ import (
 	"git.mpx.sk/elvis/poker_clock/internal/tournament"
 )
 
+const actionButtonSpacing = 3
+
 type desktopHome struct {
 	title             *canvas.Text
 	entrants          *widget.Label
@@ -36,6 +38,7 @@ type desktopHome struct {
 	chipLegendSegment int
 	infoSize          fyne.ThemeSizeName
 	leftScroll        *container.Scroll
+	actionScroll      *container.Scroll
 	blinds            *fitText
 	timer             *fitText
 	status            *fitText
@@ -233,19 +236,15 @@ func (h *desktopHome) clockColumn() fyne.CanvasObject {
 }
 
 func (d *desktop) actionColumn(h *desktopHome) fyne.CanvasObject {
-	title := canvas.NewText("ACTIONS", Spacedust.Muted)
-	title.TextSize = 14
-	title.TextStyle = fyne.TextStyle{Bold: true}
 	items := []struct {
 		key   rune
 		label string
 	}{
 		{' ', "Start / Pause"}, {'b', "Buy-in"}, {'r', "Rebuy"}, {'a', "Add-on"},
-		{'p', "Players"}, {'o', "Sit out / Return"}, {'l', "Levels"}, {'x', "Bust"}, {'d', "Dual screen"},
+		{'p', "Players"}, {'o', "Sit out / Return"}, {'l', "Levels"}, {'x', "Bust"}, {'d', "Dual screen"}, {'h', "Hand Resolver"},
 		{'s', "Settings"}, {'?', "Rules"}, {'f', "Final results"}, {'n', "Sound"}, {'e', "End tournament"}, {'q', "Exit"},
 	}
-	buttons := make([]fyne.CanvasObject, 0, len(items)+1)
-	buttons = append(buttons, title)
+	buttons := make([]fyne.CanvasObject, 0, len(items))
 	for _, item := range items {
 		key := item.key
 		button := d.newButton("", func() {
@@ -260,8 +259,9 @@ func (d *desktop) actionColumn(h *desktopHome) fyne.CanvasObject {
 		h.actions[key] = button
 		buttons = append(buttons, button)
 	}
-	scroll := container.NewScroll(container.NewVBox(buttons...))
+	scroll := container.NewScroll(container.New(layout.NewCustomPaddedVBoxLayout(actionButtonSpacing), buttons...))
 	scroll.Direction = container.ScrollVerticalOnly
+	h.actionScroll = scroll
 	return container.NewBorder(nil, nil, nil, nil, scroll)
 }
 
@@ -497,6 +497,7 @@ func (h *desktopHome) updateActions(m *Model) {
 		dualLabel += "  ·  ON"
 	}
 	set('d', dualLabel, false, h.dualVisible)
+	set('h', "H  ·  Hand Resolver", false, false)
 	set('s', "S  ·  Settings", false, false)
 	set('?', "?  ·  Rules", false, false)
 	set('f', "F  ·  Final results", !m.finalResultAvailable, false)
@@ -520,8 +521,9 @@ func (d *desktop) startupView() fyne.CanvasObject {
 	newTournament := d.newButton("New tournament (N)", func() { d.activate('n') })
 	loadTournament := d.newButton("Load tournament (L)", func() { d.activate('l') })
 	editor := d.newButton("Tournament editor (T)", func() { d.activate('t') })
+	handResolver := d.newButton("Hand Resolver (H)", func() { d.activate('h') })
 	quit := d.newButton("Quit (Q)", func() { d.activate('q') })
-	choices := []*widget.Button{newTournament, loadTournament, editor, quit}
+	choices := []*widget.Button{newTournament, loadTournament, editor, handResolver, quit}
 	d.startupButtons = choices
 	for index, button := range choices {
 		button.Alignment = widget.ButtonAlignCenter
@@ -530,13 +532,13 @@ func (d *desktop) startupView() fyne.CanvasObject {
 			button.Importance = widget.HighImportance
 		}
 	}
-	buttonColumn := container.NewVBox(newTournament, loadTournament, editor, quit)
+	buttonColumn := container.NewVBox(newTournament, loadTournament, editor, handResolver, quit)
 	buttons := container.NewCenter(container.New(&widthLimitLayout{width: 420}, buttonColumn))
 	footer := canvas.NewText("MIT Licence · Marek Paulik · elvis@elvis.sk · github.com/neurobrko/poker-tournament-clock · "+BuildVersion, Spacedust.Muted)
 	footer.TextSize = 12
 	footer.Alignment = fyne.TextAlignCenter
 	body := container.NewVBox(container.NewCenter(title), container.NewCenter(subtitle), layout.NewSpacer(), container.NewPadded(buttons), layout.NewSpacer(), d.statusNotice())
-	card := container.NewCenter(container.NewGridWrap(fyne.NewSize(820, 400), softCard("Welcome", body)))
+	card := container.NewCenter(container.NewGridWrap(fyne.NewSize(820, 600), softCard("Welcome", body)))
 	return container.NewBorder(nil, container.NewPadded(container.NewCenter(footer)), nil, nil, card)
 }
 

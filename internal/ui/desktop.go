@@ -68,29 +68,30 @@ func RunDesktop(application fyne.App) error {
 }
 
 type desktop struct {
-	app            fyne.App
-	window         fyne.Window
-	model          *Model
-	home           *desktopHome
-	dualWindow     fyne.Window
-	dualHome       *desktopHome
-	dualKeys       *desktopKeySink
-	dualTitle      string
-	dualConfigKey  string
-	dualFullscreen *widget.Button
-	dualClose      *widget.Button
-	dualVisible    bool
-	entry          *desktopEntry
-	keys           *desktopKeySink
-	browserScroll  *container.Scroll
-	modalScroll    *container.Scroll
-	rulesScroll    *container.Scroll
-	startupButtons []*widget.Button
-	browserButtons []*widget.Button
-	lastScreen     screen
-	lastHasDB      bool
-	lastModal      bool
-	closed         atomic.Bool
+	app              fyne.App
+	window           fyne.Window
+	model            *Model
+	home             *desktopHome
+	dualWindow       fyne.Window
+	dualHome         *desktopHome
+	dualKeys         *desktopKeySink
+	dualTitle        string
+	dualConfigKey    string
+	dualFullscreen   *widget.Button
+	dualClose        *widget.Button
+	dualVisible      bool
+	entry            *desktopEntry
+	keys             *desktopKeySink
+	browserScroll    *container.Scroll
+	modalScroll      *container.Scroll
+	rulesScroll      *container.Scroll
+	startupButtons   []*widget.Button
+	browserButtons   []*widget.Button
+	lastScreen       screen
+	lastHasDB        bool
+	lastModal        bool
+	skipResolverRune rune
+	closed           atomic.Bool
 }
 
 func (d *desktop) clockLoop(stop <-chan struct{}) {
@@ -159,6 +160,9 @@ func (d *desktop) render(_ bool) {
 	case m.screen == screenEditor:
 		content = d.editorView()
 		d.home = nil
+	case m.screen == screenResolver:
+		content = d.handResolverView()
+		d.home = nil
 	case m.screen == screenStartup || m.database == nil:
 		content = d.startupView()
 		d.home = nil
@@ -196,6 +200,9 @@ func (d *desktop) baseView() fyne.CanvasObject {
 	}
 	if d.model.screen == screenRules {
 		return d.rulesView()
+	}
+	if d.model.screen == screenResolver {
+		return d.handResolverView()
 	}
 	if d.model.screen == screenEditor {
 		return d.editorView()
@@ -312,6 +319,9 @@ func (d *desktop) dispatchKeyEvent(event *fyne.KeyEvent) {
 	if event == nil {
 		return
 	}
+	if event.Name != fyne.KeyPlus && event.Name != fyne.KeyMinus {
+		d.skipResolverRune = 0
+	}
 	if event.Name == fyne.KeyF11 {
 		d.debugf("F11 event: screen=%d focused=%T fullscreen=%t dual=%t scale=%.2f", d.model.screen, d.window.Canvas().Focused(), d.window.FullScreen(), d.dualVisible, d.window.Canvas().Scale())
 	}
@@ -370,6 +380,16 @@ func (d *desktop) dispatchKeyEvent(event *fyne.KeyEvent) {
 		d.dispatchKey(keyEvent{Type: keyEnter})
 	case fyne.KeyBackspace, fyne.KeyDelete:
 		d.dispatchKey(keyEvent{Type: keyBackspace})
+	case fyne.KeyPlus, fyne.KeyEqual:
+		if d.model.screen == screenResolver {
+			d.skipResolverRune = '+'
+			d.dispatchKey(keyEvent{Type: keyRunes, Runes: []rune{'+'}})
+		}
+	case fyne.KeyMinus:
+		if d.model.screen == screenResolver {
+			d.skipResolverRune = '-'
+			d.dispatchKey(keyEvent{Type: keyRunes, Runes: []rune{'-'}})
+		}
 	case fyne.KeyF11:
 		d.toggleFullScreen()
 	}
@@ -477,7 +497,7 @@ func (d *desktop) refreshDualClock() {
 }
 
 func (d *desktop) advanceWelcomeSelection() {
-	d.model.startupCursor = (d.model.startupCursor + 1) % 4
+	d.model.startupCursor = (d.model.startupCursor + 1) % 5
 	d.render(true)
 }
 
@@ -486,6 +506,10 @@ func (d *desktop) newButton(label string, tapped func()) *widget.Button {
 }
 
 func (d *desktop) dispatchRune(value rune) {
+	if d.model.screen == screenResolver && d.skipResolverRune == value {
+		d.skipResolverRune = 0
+		return
+	}
 	if value == 0 || d.model.screen == screenEditor && d.model.browser == nil && (d.model.modal == nil || d.model.modal.kind == dialogEditorForm || d.model.modal.kind == dialogText) {
 		return
 	}
@@ -578,8 +602,13 @@ func (k *desktopKeySink) TypedRune(value rune) {
 }
 func (k *desktopKeySink) TypedKey(event *fyne.KeyEvent) {
 	if event != nil && event.Name == fyne.KeyTab {
-		if k.owner != nil && k.owner.model.screen == screenStartup && k.owner.model.modal == nil {
-			k.owner.advanceWelcomeSelection()
+		if k.owner != nil && k.owner.model.modal == nil {
+			switch k.owner.model.screen {
+			case screenStartup:
+				k.owner.advanceWelcomeSelection()
+			case screenResolver:
+				k.owner.dispatchKey(keyEvent{Type: keyTab})
+			}
 		}
 		return
 	}

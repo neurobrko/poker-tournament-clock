@@ -335,8 +335,11 @@ func TestDesktopMainViewHasDisabledFutureActionsAndLargeClock(t *testing.T) {
 	if contentHeight, viewportHeight := d.home.leftScroll.Content.MinSize().Height, d.home.leftScroll.Size().Height; contentHeight > viewportHeight {
 		t.Fatalf("four-payout fullscreen column should fit without scrolling: content %v > viewport %v", contentHeight, viewportHeight)
 	}
-	if d.home.actions['h'] != nil || d.home.actions['t'] != nil {
-		t.Fatal("unimplemented hand resolver and timeline actions should be hidden")
+	if d.home.actions['h'] == nil || d.home.actions['t'] != nil {
+		t.Fatal("hand resolver action should be visible; timeline action should stay hidden")
+	}
+	if content, viewport := d.home.actionScroll.Content.MinSize().Height, d.home.actionScroll.Size().Height; content+2*d.home.actions['q'].MinSize().Height+2*actionButtonSpacing > viewport {
+		t.Fatalf("action buttons need a scrollbar or leave no room for two more: content %v + future buttons > viewport %v", content, viewport)
 	}
 	if d.home.actions[' '].Disabled() {
 		t.Fatal("clock start action unexpectedly disabled before tournament starts")
@@ -568,6 +571,9 @@ func TestSpacedustThemeUsesUbuntuFontFamilies(t *testing.T) {
 	}
 	if got := fontTheme.Font(fyne.TextStyle{Monospace: true}).Name(); got != "UbuntuSansMono-Regular.ttf" {
 		t.Fatalf("clock font = %q, want UbuntuSansMono-Regular.ttf", got)
+	}
+	if got := fontTheme.Font(fyne.TextStyle{Symbol: true}).Name(); got != "DejaVuSans.ttf" {
+		t.Fatalf("symbol font = %q, want bundled DejaVuSans.ttf with card suits", got)
 	}
 	condensedTheme := newCondensedTheme()
 	if got := condensedTheme.Font(fyne.TextStyle{}).Name(); got != "UbuntuSans-Condensed-Regular.ttf" {
